@@ -25,6 +25,7 @@ class MetaDataParser:
         self._load_conversations()
 
     def _load_movies_metadata(self):
+        print('Loading movie title metadata...')
         for movie in self._parse('movie_titles_metadata.txt', headers=self.movie_titles_headers):
             genres = literal_eval(movie['genres'].strip())
             self._add_movie(movie)
@@ -32,11 +33,13 @@ class MetaDataParser:
 
     def _load_movie_lines(self):
         """loads actual lines(conversation texts)"""
+        print('Loading movie lines...')
         for line_content in self._parse('movie_lines.txt', headers=self.movie_lines_headers):
             self._add_lines(line_content)
 
     def _load_conversations(self):
         """Loads the conversation sequences"""
+        print('Loading conversations....')
         for parsed_line in self._parse('movie_conversations.txt', headers=self.movie_conversation_headers):
             self._add_conversations(parsed_line)
 
@@ -94,7 +97,7 @@ class MetaDataParser:
             conversations.extend(self.movies[movie_id]['conversations'])
         return conversations
 
-    def get_individual_conversation_vectors(self, genre):
+    def get_separated_phrase_reply(self, genre):
         first_person, second_person = [], []
         for conversation_pair in self.get_conversation_pairs(genre):
             first_person.append(conversation_pair[0])
