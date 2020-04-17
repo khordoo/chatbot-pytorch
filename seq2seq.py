@@ -318,10 +318,12 @@ class TrainingSession:
                 nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
+                self.show_prediction_text(predicted_indexes_batch,targets)
                 print(
                     f'Epoch: {epoch}, Total batch:{cum_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
                 self.writer.add_scalar('loss:', loss.item(), cum_batch_steps)
                 self.writer.add_scalar('belu:', bleu_score_average, cum_batch_steps)
+
 
         self.save_models()
 
@@ -342,6 +344,14 @@ class TrainingSession:
         """Receives a list of sequences and and returns a batch of tensors"""
         batch = source[current_index:current_index + batch_size]
         return [torch.LongTensor(sequence).to(self.device) for sequence in batch]
+
+    @torch.no_grad()
+    def show_prediction_text(self, predicted_indexes_batch, targets):
+        random_index = np.random.randint(0, len(predicted_indexes_batch))
+        target_text = self.tokenizer.indexes_to_text(targets[random_index].cpu().data.numpy())
+        prediction_text = self.tokenizer.indexes_to_text(predicted_indexes_batch[random_index])
+        print(target_text)
+        print(prediction_text)
 
     def save_models(self):
         torch.save(self.encoder.state_dict(), 'encoder-model.dat')
