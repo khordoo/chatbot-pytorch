@@ -2,6 +2,12 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 from datetime import datetime
+import torch.nn.functional as F
+from src.movie_parser import MetaDataParser
+import numpy as np
+from nltk.translate import bleu_score
+import re
+import collections
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 LEARNING_RATE = 0.01
@@ -10,18 +16,12 @@ EMBEDDINGS_DIMS = 50
 TEACHER_FORCING_PROB = 0.5
 MAX_SEQUENCE_LENGTH = 10
 
-import torch
-import torch.nn.functional as F
-from src.movie_parser import MetaDataParser
-import numpy as np
-from nltk.translate import bleu_score
-
 MOVIES_TITLE_HEADERS = ['movieId', 'title', 'year', 'rating', 'votes', 'genres']
 MOVIE_LINES_HEADERS = ['lineId', 'characterId', 'movieId', 'characterName', 'text']
 MOVE_CONVERSATION_SEQUENCE_HEADERS = ['characterID1', 'characterID2', 'movieId', 'lineIds']
 DELIMITER = '+++$+++'
 DATA_DIRECTORY = 'data'
-MAX_TOKEN_LENGTH = 20
+MAX_TOKEN_LENGTH = 10
 MIN_TOKEN_FREQ = 10
 HIDDEN_STATE_SIZE = 512
 EMBEDDING_DIMS = 50
@@ -67,54 +67,80 @@ class DecoderLSTM(nn.Module):
 class Tokenizer:
     """Converts Text into its numerical representation"""
 
-    def __init__(self, max_sequence_length):
+    def __init__(self, max_sequence_length, min_token_frequency=10):
         self.START_TOKEN = '<sos>'
         self.PADDING_TOKEN = '<pad>'
         self.END_TOKEN = '<eos>'
-        self.word2index = {self.PADDING_TOKEN: 0, self.START_TOKEN: 1, self.END_TOKEN: 2}
-        self.index2word = {0: self.PADDING_TOKEN, 1: self.START_TOKEN, 2: self.END_TOKEN}
-        self.words_count = len(self.word2index)
+        self.UNKNOWN_TOKEN = '<unk>'
         self.max_length = max_sequence_length
+        self.min_token_frequency = min_token_frequency
+        self.init_dict()
+
+    def init_dict(self):
+        self.word2index = {}
+        self.index2word = {}
+        self.word_counter = collections.Counter()
+        for token in [self.PADDING_TOKEN, self.START_TOKEN, self.END_TOKEN, self.UNKNOWN_TOKEN]:
+            self._add_word(token)
 
     def fit_on_text(self, text_array):
         """Creates a numerical index value for every unique word"""
         for sentence in text_array:
+            sentence = self.sanitize(sentence)
             self._add_sentence(sentence)
+        print(f'Added {len(self.word2index)} unique words to the dictionary')
+        self._reduce_dict_size()
+
+    def _add_word(self, word):
+        index = len(self.word2index)
+        self.word2index[word] = index
+        self.index2word[index] = word
+
+    def _reduce_dict_size(self):
+        frequent_words = [word for word, count in self.word_counter.items()
+                          if count > self.min_token_frequency]
+        self.init_dict()
+        for word in frequent_words:
+            self._add_word(word)
+        print(f'Removed non frequent words: Updated words count:{len(self.word2index)} ')
 
     def _add_sentence(self, sentence):
         """Creates indexes for unique word in the sentences and
         adds them to the dictionary"""
         for word in sentence.strip().lower().split(' '):
+            self.word_counter[word] += 1
             if word not in self.word2index:
-                self.word2index[word] = self.words_count
-                self.index2word[self.words_count] = word
-                self.words_count += 1
+                self._add_word(word)
 
-    def normalize(self, text):
-        pass
+    def sanitize(self, text):
+        text = re.sub(r'([.?!])', r' \1', text)
+        text = re.sub(r'[^a-zA-Z.?!]+', r' ', text)
+        text = re.sub(r'\s+', ' ', text)
+        return text
 
     def texts_to_index(self, sentences):
         """Convert words in sentences to their numerical index values"""
         sentences_index = []
         end_token_index = self.word2index[self.END_TOKEN]
+        unknown_token_index = self.word2index[self.UNKNOWN_TOKEN]
+
         for sentence in sentences:
-            sentence_index = []
-            for word in sentence.strip().lower().split(' '):
-                sentence_index.append(self.word2index[word])
-            sentence_index.append(end_token_index)
-            sentence_index = self._pad(sentence_index)
-            sentence_index = self._clip(sentence_index)
-            sentences_index.append(sentence_index)
+            sentence_index = [
+                self.word2index.get(word, unknown_token_index)
+                for word in sentence.strip().lower().split(' ')
+            ]
+            if self.is_valid_token(sentences_index):
+                sentence_index.append(end_token_index)
+                sentences_index.append(sentence_index)
         return sentences_index
 
-    def _clip(self, sequence):
-        return sequence[:self.max_length]
-
-    def _pad(self, sequence):
-        pad_index = self.word2index[self.PADDING_TOKEN]
-        while len(sequence) < self.max_length:
-            sequence.append(pad_index)
-        return sequence
+    def is_valid_token(self, sentence):
+        """Filter very long text or
+         texts with words that are not in our dictionary"""
+        unknown_token_index = self.word2index[self.UNKNOWN_TOKEN]
+        if unknown_token_index in sentence or len(sentence) > self.max_length:
+            return False
+        return True
 
     def indexes_to_text(self, word_numbers):
         """Converts an array of numbers to a text string"""
@@ -126,7 +152,6 @@ class Tokenizer:
     @property
     def start_token_index(self):
         return self.word2index[self.START_TOKEN]
-
 
 class TrainingSession:
     """A container class that runs the training job"""
@@ -222,8 +247,10 @@ class TrainingSession:
             pass
 
 
-tokenizer = Tokenizer(max_sequence_length=MAX_TOKEN_LENGTH)
-parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER, movie_titles_headers=MOVIES_TITLE_HEADERS,
+tokenizer = Tokenizer(min_token_frequency=MIN_TOKEN_FREQ, max_sequence_length=MAX_TOKEN_LENGTH)
+
+parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
+                        movie_titles_headers=MOVIES_TITLE_HEADERS,
                         movie_lines_headers=MOVIE_LINES_HEADERS,
                         movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
 
@@ -239,7 +266,8 @@ targets = tokenizer.texts_to_index(targets)
 encoder = EncoderLSTM(input_size=tokenizer.words_count, hidden_size=HIDDEN_STATE_SIZE,
                       embeddings_dims=EMBEDDINGS_DIMS).to(
     DEVICE)
-decoder = DecoderLSTM(input_size=tokenizer.words_count, hidden_size=HIDDEN_STATE_SIZE, embeddings_dims=EMBEDDINGS_DIMS,
+decoder = DecoderLSTM(input_size=tokenizer.words_count, hidden_size=HIDDEN_STATE_SIZE,
+                      embeddings_dims=EMBEDDINGS_DIMS,
                       vocab_size=tokenizer.words_count).to(DEVICE)
 trainer = TrainingSession(encoder=encoder, decoder=decoder, tokenizer=tokenizer, learning_rate=LEARNING_RATE,
                           teacher_forcing_prob=TEACHER_FORCING_PROB,
