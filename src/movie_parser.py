@@ -20,6 +20,9 @@ class MetaDataParser:
         self.delimiter = delimiter
         self.movies = {}
         self.genres = defaultdict(list)
+
+
+    def load_data(self):
         self._load_movies_metadata()
         self._load_movie_lines()
         self._load_conversations()
@@ -97,7 +100,8 @@ class MetaDataParser:
             conversations.extend(self.movies[movie_id]['conversations'])
         return conversations
 
-    def get_separated_phrase_reply(self, genre):
+    def get_splitted_questions_replies_vectors(self, genre):
+        """Splits the dialogs into to separate arrays for training."""
         first_person, second_person = [], []
         for conversation_pair in self.get_conversation_pairs(genre):
             first_person.append(conversation_pair[0])
@@ -105,6 +109,7 @@ class MetaDataParser:
         return first_person, second_person
 
     def show_sample_dialog(self, genre, limit=10):
+        """Shows some sample dialogs for the specified genre"""
         conversations = self.get_conversation_pairs(genre=genre)
         start = np.random.randint(0, len(conversations) - limit - 1)
         return conversations[start:start + limit]
