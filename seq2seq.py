@@ -17,7 +17,7 @@ MOVE_CONVERSATION_SEQUENCE_HEADERS = ['characterID1', 'characterID2', 'movieId',
 DELIMITER = '+++$+++'
 DATA_DIRECTORY = 'data'
 
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.01
 EMBEDDINGS_DIMS = 50
 TEACHER_FORCING_PROB = 0.5
 MAX_TOKEN_LENGTH = 20
@@ -199,23 +199,6 @@ class Tokenizer:
         return self.word2index[self.START_TOKEN]
 
 
-class RNNSequenceProcessor:
-    """Class to pre-process RNN sequences"""
-
-    def __init__(self, device):
-        self.device = device
-
-    def batch_generator(self, sources, targets, batch_size):
-        """Creates tensor batches from list of sequences."""
-        for i in range(0, len(sources), batch_size):
-            yield self._batch(sources, i, batch_size), self._batch(targets, i, batch_size)
-
-    def _batch(self, source, current_index, batch_size):
-        """Receives a list of sequences and and returns a batch of tensors"""
-        batch = source[current_index:current_index + batch_size]
-        return [torch.LongTensor(sequence).to(self.device) for sequence in batch]
-
-
 class EncoderDecoder:
     def __init__(self, encoder, decoder, tokenizer, device):
         self.encoder = encoder
@@ -279,6 +262,7 @@ class EncoderDecoder:
             predicted_indexes_batch.append(predicted_indexes)
 
         average_belu_score /= batch_size
+        loss /= batch_size
         return loss, average_belu_score, predicted_indexes_batch
 
     def _extract_step_hidden_state(self, hidden_states, decode_step):
@@ -298,13 +282,12 @@ class EncoderDecoder:
 class TrainingSession:
     """A container class that runs the training job"""
 
-    def __init__(self, encoder, decoder, encoder_decoder, tokenizer, seq_processor, device, learning_rate,
+    def __init__(self, encoder, decoder, encoder_decoder, tokenizer, device, learning_rate,
                  teacher_forcing_prob):
         self.encoder = encoder
         self.decoder = decoder
         self.encoder_decoder = encoder_decoder
         self.tokenizer = tokenizer
-        self.seq_processor = seq_processor
         self.device = device
         self.learning_rate = learning_rate
         self.teacher_forcing_prob = teacher_forcing_prob
@@ -319,11 +302,11 @@ class TrainingSession:
     def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20):
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
-        print('Received training parsis zsieze :', len(train_sources), len(train_targets))
+        print('Received training pairs with sizes :', len(train_sources), len(train_targets))
         cum_batch_steps = 0
         for epoch in range(epochs):
             batch_step = 0
-            for sources, targets in self.seq_processor.batch_generator(train_sources, train_targets, batch_size):
+            for sources, targets in self.batch_generator(train_sources, train_targets, batch_size):
                 batch_step += 1
                 cum_batch_steps += 1
                 encoder_optimizer.zero_grad()
@@ -336,11 +319,29 @@ class TrainingSession:
                 encoder_optimizer.step()
                 decoder_optimizer.step()
                 print(
-                    f'Epoch: {epoch}, Total batch:{cum_batch_steps}, Batch:{batch_step},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
+                    f'Epoch: {epoch}, Total batch:{cum_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
                 self.writer.add_scalar('loss:', loss.item(), cum_batch_steps)
                 self.writer.add_scalar('belu:', bleu_score_average, cum_batch_steps)
 
         self.save_models()
+
+    def batch_generator(self, sources, targets, batch_size, drop_last=False):
+        """Creates tensor batches from list of sequences.
+           If the source is not exactly dividable by the batch size,
+           the last batch would be smaller than the rest and might create a bumpy loss trend.
+           drop_last =True will drip that smaller batch.
+        """
+        last_index = len(sources)
+        if drop_last:
+            last_index -= last_index % batch_size
+
+        for i in range(0, last_index, batch_size):
+            yield self._batch(sources, i, batch_size), self._batch(targets, i, batch_size)
+
+    def _batch(self, source, current_index, batch_size):
+        """Receives a list of sequences and and returns a batch of tensors"""
+        batch = source[current_index:current_index + batch_size]
+        return [torch.LongTensor(sequence).to(self.device) for sequence in batch]
 
     def save_models(self):
         torch.save(self.encoder.state_dict(), 'encoder-model.dat')
@@ -351,14 +352,13 @@ class TrainingSession:
 
 
 tokenizer = Tokenizer(min_token_frequency=MIN_TOKEN_FREQ, max_sequence_length=MAX_TOKEN_LENGTH)
-sequence_processor = RNNSequenceProcessor(device=DEVICE)
 parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
                         movie_titles_headers=MOVIES_TITLE_HEADERS,
                         movie_lines_headers=MOVIE_LINES_HEADERS,
                         movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
 
 parser.load_data()
-conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=False)
+conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
 
 sources_conversation, targets_replies = zip(*conversation_pairs)
 print('Total number of data pars:', len(sources_conversation), 'Total replies:', len(targets_replies))
@@ -373,7 +373,6 @@ decoder = DecoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_S
                       vocab_size=tokenizer.dictionary_size).to(DEVICE)
 encoder_decoder = EncoderDecoder(encoder, decoder, tokenizer=tokenizer, device=DEVICE)
 trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=encoder_decoder, tokenizer=tokenizer,
-                          seq_processor=sequence_processor,
                           learning_rate=LEARNING_RATE,
                           teacher_forcing_prob=TEACHER_FORCING_PROB,
                           device=DEVICE)
