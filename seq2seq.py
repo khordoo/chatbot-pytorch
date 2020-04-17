@@ -74,10 +74,10 @@ class Tokenizer:
     """Converts Text into its numerical representation"""
 
     def __init__(self, max_sequence_length, min_token_frequency=10):
-        self.START_TOKEN = '<sos>'
-        self.PADDING_TOKEN = '<pad>'
-        self.END_TOKEN = '<eos>'
-        self.UNKNOWN_TOKEN = '<unk>'
+        self.START_TOKEN = "<sos>"
+        self.PADDING_TOKEN = "<pad>"
+        self.END_TOKEN = "<eos>"
+        self.UNKNOWN_TOKEN = "<unk>"
         self.max_length = max_sequence_length
         self.min_token_frequency = min_token_frequency
         self._init_dict()
@@ -89,22 +89,53 @@ class Tokenizer:
         for token in [self.PADDING_TOKEN, self.START_TOKEN, self.END_TOKEN, self.UNKNOWN_TOKEN]:
             self._add_word(token)
 
+    def text_to_index_paris(self, conversation_pairs):
+        """We want to ignore both source and reply if an unknown word found in either of them
+          So we have to process the together
+        """
+        sources, targets = zip(*conversation_pairs)
+        end_token_index = self.word2index[self.END_TOKEN]
+        source_indexes, target_indexes = [], []
+        for source_text, target_text in zip(sources, targets):
+            try:
+                tokenized_source = self._tokenize(source_text)
+                tokenized_target = self._tokenize(target_text)
+                if len(tokenized_source) > self.max_length and len(tokenized_target) > self.max_length:
+                    continue
+            except KeyError:
+                # Ignore a text pair with unknown words
+                continue
+            tokenized_source.append(end_token_index)
+            tokenized_target.append(end_token_index)
+            source_indexes.append(tokenized_source)
+            target_indexes.append(tokenized_target)
+
+        print(f"Tokenized sources:{len(source_indexes)} , Tokenized targets:{len(target_indexes)}")
+        return source_indexes, target_indexes
+
+    def _tokenize(self, sentence_text):
+        sentence_text = self._sanitize(sentence_text)
+        return [
+            self.word2index[word]
+            for word in sentence_text.strip().split(" ")
+        ]
+
     def texts_to_index(self, sentences):
         """Convert words in sentences to their numerical index values"""
         indexes = []
         end_token_index = self.word2index[self.END_TOKEN]
         unknown_token_index = self.word2index[self.UNKNOWN_TOKEN]
-        print('Received text sequences:', len(sentences))
+        print("Received text sequences:", len(sentences))
         for sentence_text in sentences:
             sentence_text = self._sanitize(sentence_text)
             sentence_index = [
                 self.word2index.get(word, unknown_token_index)
-                for word in sentence_text.strip().lower().split(' ')
+                for word in sentence_text.strip().lower().split(" ")
             ]
             if self.is_valid_token(sentence_index):
                 sentence_index.append(end_token_index)
                 indexes.append(sentence_index)
-        print('Valid text sequences:', len(indexes))
+        print("Valid text sequences:", len(indexes))
         return indexes
 
     def indexes_to_text(self, word_numbers):
@@ -112,20 +143,21 @@ class Tokenizer:
         ignore_index = [self.word2index[self.PADDING_TOKEN],
                         self.word2index[self.END_TOKEN]
                         ]
-        return ' '.join([self.index2word[idx] for idx in word_numbers if idx not in ignore_index])
+        return " ".join([self.index2word[idx] for idx in word_numbers if idx not in ignore_index])
 
     def fit_on_text(self, text_array):
         """Creates a numerical index value for every unique word"""
+        print(f"Fitting on {len(text_array)} pairs ")
         for sentence in text_array:
             sentence = self._sanitize(sentence)
             self._add_sentence(sentence)
-        print(f'Added {len(self.word2index)} unique words to the dictionary')
+        print(f"Added {len(self.word2index)} unique words to the dictionary")
         self._reduce_dict_size()
 
     def _add_sentence(self, sentence):
         """Creates indexes for unique word in the sentences and
         adds them to the dictionary"""
-        for word in sentence.strip().lower().split(' '):
+        for word in sentence.strip().lower().split(" "):
             self.word_counter[word] += 1
             if word not in self.word2index:
                 self._add_word(word)
@@ -136,9 +168,12 @@ class Tokenizer:
         self.index2word[index] = word
 
     def _sanitize(self, text):
-        text = re.sub(r'([.?!])', r' \1', text)
+        text = text.lower().strip()
+        text = re.sub(r"([.]{3})", r' ', text)
+        text = re.sub(r"([.?!])", r' \1 ', text)
         text = re.sub(r'[^a-zA-Z.?!]+', r' ', text)
         text = re.sub(r'\s+', ' ', text)
+        text = text.strip()
         return text
 
     def _reduce_dict_size(self):
@@ -289,16 +324,14 @@ class TrainingSession:
     def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20):
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
-        print('Received training parsis zsieze :',len(train_sources),len(train_targets))
+        print('Received training parsis zsieze :', len(train_sources), len(train_targets))
         for epoch in range(epochs):
             batch_step = 0
-            for sources, targes in self.seq_processor.batch_generator(train_sources, train_targets, batch_size):
+            for sources, targets in self.seq_processor.batch_generator(train_sources, train_targets, batch_size):
                 batch_step += 1
-                if batch_step == 46:
-                    j = 0
                 encoder_optimizer.zero_grad()
                 decoder_optimizer.zero_grad()
-                loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targes,
+                loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targets,
                                                                                               teacher_forcing_prob=teacher_forcing_prob)
                 loss.backward()
                 encoder_optimizer.step()
@@ -325,15 +358,15 @@ parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
                         movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
 
 parser.load_data()
-conversation_pair = parser.get_conversation_pairs(genre=GENRE)
+# TODO change randomize to true for training.
+conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=False)
 
-sources_conversation, targets_replies = zip(*conversation_pair)
+sources_conversation, targets_replies = zip(*conversation_pairs)
 print('Total number of data pars:', len(sources_conversation), 'Total replies:', len(targets_replies))
 tokenizer.fit_on_text(sources_conversation + targets_replies)
 print('Dictionary size:', tokenizer.dictionary_size)
-sources_conversation = tokenizer.texts_to_index(sources_conversation)
 
-targets_replies = tokenizer.texts_to_index(targets_replies)
+sources_conversation, targets_replies = tokenizer.text_to_index_paris(conversation_pairs)
 encoder = EncoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
                       embeddings_dims=EMBEDDINGS_DIMS).to(DEVICE)
 decoder = DecoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
