@@ -117,7 +117,7 @@ class Tokenizer:
             for word in sentence_text.strip().split(" ")
         ]
 
-    def texts_to_index(self, sentences):
+    def texts_to_index(self, sentences, raise_unknown=False):
         """Convert words in sentences to their numerical index values"""
         indexes = []
         end_token_index = self.word2index[self.END_TOKEN]
@@ -125,13 +125,20 @@ class Tokenizer:
         print("Received text sequences:", len(sentences))
         for sentence_text in sentences:
             sentence_text = self._sanitize(sentence_text)
-            sentence_index = [
-                self.word2index.get(word, unknown_token_index)
-                for word in sentence_text.strip().lower().split(" ")
-            ]
-            if self.is_valid_token(sentence_index):
-                sentence_index.append(end_token_index)
-                indexes.append(sentence_index)
+            sentence_index = []
+            for word in sentence_text.strip().lower().split(" "):
+                try:
+                    sentence_index.append(
+                        self.word2index[word])
+                except KeyError:
+                    if raise_unknown:
+                        raise KeyError(f'Unrecognized Word:{word}')
+                    else:
+                        sentence_index.append(unknown_token_index)
+
+            sentence_index.append(end_token_index)
+            indexes.append(sentence_index)
+
         print("Valid text sequences:", len(indexes))
         return indexes
 
@@ -288,7 +295,12 @@ class EncoderDecoder:
                                         weights=(0.5, 0.5))
 
     def predict_response(self, question_text, max_len=10, mode='argmax'):
-        question_indexes = self.tokenizer.texts_to_index([question_text])
+        try:
+            question_indexes = self.tokenizer.texts_to_index(sentences=[question_text], raise_unknown=True)
+        except KeyError as err:
+            unknown_word = err.args[0].split(':')[1]
+            return f"Sorry! I don't understand the word : {unknown_word}"
+
         question_indexes = [torch.LongTensor(question).to(self.device) for question in question_indexes]
         predicted_response_indexes = self._decode_prediction_response(question_indexes, max_len, mode)
 
@@ -309,6 +321,9 @@ class EncoderDecoder:
                 response_indexes.append(predicted_index)
 
         return response_indexes
+
+    def load_states(self, encoder, decoder, tokenizer):
+        pass
 
 
 class TrainingSession:
@@ -356,8 +371,6 @@ class TrainingSession:
                 self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
                 self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
 
-
-
         self.save_models()
 
     def batch_generator(self, sources, targets, batch_size, drop_last=False):
@@ -383,15 +396,14 @@ class TrainingSession:
         random_index = np.random.randint(0, len(predicted_indexes_batch))
         target_text = self.tokenizer.indexes_to_text(targets[random_index].cpu().data.numpy())
         prediction_text = self.tokenizer.indexes_to_text(predicted_indexes_batch[random_index])
-        if step % 20 == 0:
+        if step % 2 == 0:
             print(target_text)
             print(prediction_text)
             print('========================================')
-            question = 'How are you?'
+            question = 'Are you good?'
             response = self.encoder_decoder.predict_response(question_text=question, max_len=10)
             print('Question:', question)
             print('Response:', response)
-
 
     def save_models(self):
         torch.save(self.encoder.state_dict(), 'encoder-model.dat')
@@ -427,4 +439,5 @@ trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=enco
                           learning_rate=LEARNING_RATE,
                           teacher_forcing_prob=TEACHER_FORCING_PROB,
                           device=DEVICE)
+
 trainer.train(sources_conversation, targets_replies, batch_size=BATCH_SIZE, epochs=EPOCHS)
