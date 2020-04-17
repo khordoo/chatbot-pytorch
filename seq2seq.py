@@ -287,6 +287,29 @@ class EncoderDecoder:
                                         smoothing_function=sf.method1,
                                         weights=(0.5, 0.5))
 
+    def predict_response(self, question_text, max_len=10, mode='argmax'):
+        question_indexes = self.tokenizer.texts_to_index([question_text])
+        question_indexes = [torch.LongTensor(question).to(self.device) for question in question_indexes]
+        predicted_response_indexes = self._decode_prediction_response(question_indexes, max_len, mode)
+
+        return self.tokenizer.indexes_to_text(predicted_response_indexes)
+
+    def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
+        encoder_out, encoder_hidden = self._encode(sources)
+        response_indexes = []
+        for decode_step, source in enumerate(sources):
+            decoder_hidden = self._extract_step_hidden_state(encoder_hidden, decode_step)
+            decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
+            while len(response_indexes) < max_response_length:
+                decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
+                predicted_index = decoder_out.argmax(dim=2).cpu().item()
+                if predicted_index == self.end_token_index:
+                    break
+
+                response_indexes.append(predicted_index)
+
+        return response_indexes
+
 
 class TrainingSession:
     """A container class that runs the training job"""
@@ -327,11 +350,13 @@ class TrainingSession:
                 nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                self.show_prediction_text(predicted_indexes_batch, targets, total_batch_steps)
+                self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps)
                 print(
                     f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
                 self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
                 self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
+
+
 
         self.save_models()
 
@@ -354,13 +379,19 @@ class TrainingSession:
         return [torch.LongTensor(sequence).to(self.device) for sequence in batch]
 
     @torch.no_grad()
-    def show_prediction_text(self, predicted_indexes_batch, targets, step):
+    def _show_prediction_text(self, predicted_indexes_batch, targets, step):
         random_index = np.random.randint(0, len(predicted_indexes_batch))
         target_text = self.tokenizer.indexes_to_text(targets[random_index].cpu().data.numpy())
         prediction_text = self.tokenizer.indexes_to_text(predicted_indexes_batch[random_index])
         if step % 20 == 0:
             print(target_text)
             print(prediction_text)
+            print('========================================')
+            question = 'How are you?'
+            response = self.encoder_decoder.predict_response(question_text=question, max_len=10)
+            print('Question:', question)
+            print('Response:', response)
+
 
     def save_models(self):
         torch.save(self.encoder.state_dict(), 'encoder-model.dat')
