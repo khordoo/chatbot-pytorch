@@ -176,6 +176,7 @@ class RNNSequenceProcessor:
 
     def batch_generator(self, sources, targets, batch_size):
         """Creates tensor batches from list of sequences."""
+        print(f'Batch generator:, Sources size: {len(sources)} , targets size:{len(targets)}')
         for i in range(0, len(sources), batch_size):
             yield self._batch(sources, i, batch_size), self._batch(targets, i, batch_size)
 
@@ -288,14 +289,17 @@ class TrainingSession:
     def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20):
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
+        print('Received training parsis zsieze :',len(train_sources),len(train_targets))
         for epoch in range(epochs):
             batch_step = 0
             for sources, targes in self.seq_processor.batch_generator(train_sources, train_targets, batch_size):
                 batch_step += 1
+                if batch_step == 46:
+                    j = 0
                 encoder_optimizer.zero_grad()
                 decoder_optimizer.zero_grad()
-                loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targets,
-                                                                                              teacher_forcing_prob=self.teacher_forcing_prob)
+                loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targes,
+                                                                                              teacher_forcing_prob=teacher_forcing_prob)
                 loss.backward()
                 encoder_optimizer.step()
                 decoder_optimizer.step()
@@ -323,13 +327,13 @@ parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
 parser.load_data()
 conversation_pair = parser.get_conversation_pairs(genre=GENRE)
 
-sources, targets = zip(*conversation_pair)
-print('Total number of data pars:', len(sources))
-tokenizer.fit_on_text(sources + targets)
+sources_conversation, targets_replies = zip(*conversation_pair)
+print('Total number of data pars:', len(sources_conversation), 'Total replies:', len(targets_replies))
+tokenizer.fit_on_text(sources_conversation + targets_replies)
 print('Dictionary size:', tokenizer.dictionary_size)
-sources = tokenizer.texts_to_index(sources)
+sources_conversation = tokenizer.texts_to_index(sources_conversation)
 
-targets = tokenizer.texts_to_index(targets)
+targets_replies = tokenizer.texts_to_index(targets_replies)
 encoder = EncoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
                       embeddings_dims=EMBEDDINGS_DIMS).to(DEVICE)
 decoder = DecoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
@@ -341,4 +345,4 @@ trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=enco
                           learning_rate=LEARNING_RATE,
                           teacher_forcing_prob=TEACHER_FORCING_PROB,
                           device=DEVICE)
-trainer.train(sources, targets, batch_size=BATCH_SIZE, epochs=EPOCHS)
+trainer.train(sources_conversation, targets_replies, batch_size=BATCH_SIZE, epochs=EPOCHS)

@@ -6,6 +6,7 @@ https://www.cs.cornell.edu/~cristian/Cornell_Movie-Dialogs_Corpus.html
 from collections import defaultdict
 from ast import literal_eval
 import numpy as np
+import random
 
 
 class MetaDataParser:
@@ -20,7 +21,6 @@ class MetaDataParser:
         self.delimiter = delimiter
         self.movies = {}
         self.genres = defaultdict(list)
-
 
     def load_data(self):
         self._load_movies_metadata()
@@ -94,10 +94,12 @@ class MetaDataParser:
             print(f'{genre}:{len(movies)}')
         return self.genres.keys()
 
-    def get_conversation_pairs(self, genre):
+    def get_conversation_pairs(self, genre, randomize=False):
         conversations = []
         for movie_id in self.genres[genre]:
             conversations.extend(self.movies[movie_id]['conversations'])
+        if randomize:
+            random.shuffle(conversations)
         return conversations
 
     def get_splitted_questions_replies_vectors(self, genre):
