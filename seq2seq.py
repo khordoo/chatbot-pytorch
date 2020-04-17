@@ -9,6 +9,7 @@ from nltk.translate import bleu_score
 import re
 import collections
 import joblib
+from data.contractions import contractions_dict
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 MOVIES_TITLE_HEADERS = ['movieId', 'title', 'year', 'rating', 'votes', 'genres']
@@ -68,11 +69,12 @@ class DecoderLSTM(nn.Module):
 class Tokenizer:
     """Converts Text into its numerical representation"""
 
-    def __init__(self, max_sequence_length, min_token_frequency=10):
+    def __init__(self, contractions_dict=None, max_sequence_length=20, min_token_frequency=10):
         self.START_TOKEN = "<sos>"
         self.PADDING_TOKEN = "<pad>"
         self.END_TOKEN = "<eos>"
         self.UNKNOWN_TOKEN = "<unk>"
+        self.contractions_dict = contractions_dict
         self.max_length = max_sequence_length
         self.min_token_frequency = min_token_frequency
         self._init_dict()
@@ -164,11 +166,16 @@ class Tokenizer:
 
     def _sanitize(self, text):
         text = text.lower().strip()
+        if self.contractions_dict is not None:
+            for contraction, expanded in self.contractions_dict.items():
+                text = re.sub(contraction, ' ' + expanded + ' ', text)
+
         # text = re.sub(r"([.]{3})", r' ', text)
         text = re.sub(r"([.?!])", r' \1 ', text)
         text = re.sub(r'[^a-zA-Z.?!]+', r' ', text)
         text = re.sub(r'\s+', ' ', text)
         text = text.strip()
+
         return text
 
     def _reduce_dict_size(self):
@@ -363,7 +370,8 @@ class TrainingSession:
         print('Decoder model successfully saved!')
 
 
-tokenizer = Tokenizer(min_token_frequency=MIN_TOKEN_FREQ, max_sequence_length=MAX_TOKEN_LENGTH)
+tokenizer = Tokenizer(contractions_dict=contractions_dict, min_token_frequency=MIN_TOKEN_FREQ,
+                      max_sequence_length=MAX_TOKEN_LENGTH)
 parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
                         movie_titles_headers=MOVIES_TITLE_HEADERS,
                         movie_lines_headers=MOVIE_LINES_HEADERS,
