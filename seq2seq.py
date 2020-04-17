@@ -11,25 +11,23 @@ import collections
 import joblib
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-LEARNING_RATE = 0.01
-LSTM_HIDDEN_SIZE = 100
-EMBEDDINGS_DIMS = 50
-TEACHER_FORCING_PROB = 0.5
-MAX_SEQUENCE_LENGTH = 10
-
 MOVIES_TITLE_HEADERS = ['movieId', 'title', 'year', 'rating', 'votes', 'genres']
 MOVIE_LINES_HEADERS = ['lineId', 'characterId', 'movieId', 'characterName', 'text']
 MOVE_CONVERSATION_SEQUENCE_HEADERS = ['characterID1', 'characterID2', 'movieId', 'lineIds']
 DELIMITER = '+++$+++'
 DATA_DIRECTORY = 'data'
-MAX_TOKEN_LENGTH = 10
+
+LEARNING_RATE = 0.001
+EMBEDDINGS_DIMS = 50
+TEACHER_FORCING_PROB = 0.5
+MAX_TOKEN_LENGTH = 20
 MIN_TOKEN_FREQ = 10
 HIDDEN_STATE_SIZE = 512
-EMBEDDING_DIMS = 50
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 GENRE = 'family'
 BATCH_SIZE = 32
 EPOCHS = 100
+CLIP = 10
 
 
 class EncoderLSTM(nn.Module):
@@ -44,9 +42,6 @@ class EncoderLSTM(nn.Module):
                             batch_first=True)
 
     def forward(self, x):
-        # x = self.embedding(x)
-        # out, hidden_states = self.lstm(x, hidden_states)
-        # return out, hidden_states
         return self.lstm(x)
 
 
@@ -169,7 +164,7 @@ class Tokenizer:
 
     def _sanitize(self, text):
         text = text.lower().strip()
-        text = re.sub(r"([.]{3})", r' ', text)
+        # text = re.sub(r"([.]{3})", r' ', text)
         text = re.sub(r"([.?!])", r' \1 ', text)
         text = re.sub(r'[^a-zA-Z.?!]+', r' ', text)
         text = re.sub(r'\s+', ' ', text)
@@ -179,9 +174,10 @@ class Tokenizer:
     def _reduce_dict_size(self):
         frequent_words = [word for word, count in self.word_counter.items()
                           if count > self.min_token_frequency]
-        self._init_dict()
-        for word in frequent_words:
-            self._add_word(word)
+        if frequent_words:
+            self._init_dict()
+            for word in frequent_words:
+                self._add_word(word)
         print(f'Removed non frequent words: Updated words count:{len(self.word2index)} ')
 
     def is_valid_token(self, sentence):
@@ -211,7 +207,6 @@ class RNNSequenceProcessor:
 
     def batch_generator(self, sources, targets, batch_size):
         """Creates tensor batches from list of sequences."""
-        print(f'Batch generator:, Sources size: {len(sources)} , targets size:{len(targets)}')
         for i in range(0, len(sources), batch_size):
             yield self._batch(sources, i, batch_size), self._batch(targets, i, batch_size)
 
@@ -280,7 +275,7 @@ class EncoderDecoder:
                 loss += F.cross_entropy(decoder_out.squeeze(0), actual_target.flatten(),
                                         ignore_index=self.pad_token_index)
                 predicted_indexes.append(predicted_target.item())
-            average_belu_score += self.belu_score(predicted_indexes, target)
+            average_belu_score += self.belu_score(predicted_indexes, target.cpu().data.numpy())
             predicted_indexes_batch.append(predicted_indexes)
 
         average_belu_score /= batch_size
@@ -325,20 +320,25 @@ class TrainingSession:
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
         print('Received training parsis zsieze :', len(train_sources), len(train_targets))
+        cum_batch_steps = 0
         for epoch in range(epochs):
             batch_step = 0
             for sources, targets in self.seq_processor.batch_generator(train_sources, train_targets, batch_size):
                 batch_step += 1
+                cum_batch_steps += 1
                 encoder_optimizer.zero_grad()
                 decoder_optimizer.zero_grad()
                 loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targets,
                                                                                               teacher_forcing_prob=teacher_forcing_prob)
                 loss.backward()
+                nn.utils.clip_grad_norm_(self.encoder.parameters(), CLIP)
+                nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                print(f'Epoch: {epoch}, Batch:{batch_step}, Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
-                self.writer.add_scalar('loss:', loss.item(), batch_step)
-                self.writer.add_scalar('belu:', bleu_score_average, batch_step)
+                print(
+                    f'Epoch: {epoch}, Total batch:{cum_batch_steps}, Batch:{batch_step},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
+                self.writer.add_scalar('loss:', loss.item(), cum_batch_steps)
+                self.writer.add_scalar('belu:', bleu_score_average, cum_batch_steps)
 
         self.save_models()
 
@@ -347,7 +347,7 @@ class TrainingSession:
         torch.save(self.decoder.state_dict(), 'decoder-model.dat')
         joblib.dump(self.tokenizer, 'tokenizer.joblib')
         self.writer.close()
-        print('Decoder model succesfuly saved!')
+        print('Decoder model successfully saved!')
 
 
 tokenizer = Tokenizer(min_token_frequency=MIN_TOKEN_FREQ, max_sequence_length=MAX_TOKEN_LENGTH)
@@ -358,7 +358,6 @@ parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
                         movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
 
 parser.load_data()
-# TODO change randomize to true for training.
 conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=False)
 
 sources_conversation, targets_replies = zip(*conversation_pairs)
