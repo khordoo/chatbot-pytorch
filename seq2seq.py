@@ -20,13 +20,13 @@ DATA_DIRECTORY = 'data'
 LEARNING_RATE = 0.01
 EMBEDDINGS_DIMS = 50
 TEACHER_FORCING_PROB = 0.5
-MAX_TOKEN_LENGTH = 20
+MAX_TOKEN_LENGTH = 10
 MIN_TOKEN_FREQ = 10
 HIDDEN_STATE_SIZE = 512
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 GENRE = 'family'
 BATCH_SIZE = 32
-EPOCHS = 100
+EPOCHS = 50
 CLIP = 10
 
 
@@ -257,7 +257,9 @@ class EncoderDecoder:
                     decoder_input = predicted_target
                 loss += F.cross_entropy(decoder_out.squeeze(0), actual_target.flatten(),
                                         ignore_index=self.pad_token_index)
+
                 predicted_indexes.append(predicted_target.item())
+
             average_belu_score += self.belu_score(predicted_indexes, target.cpu().data.numpy())
             predicted_indexes_batch.append(predicted_indexes)
 
@@ -303,12 +305,12 @@ class TrainingSession:
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
         print('Received training pairs with sizes :', len(train_sources), len(train_targets))
-        cum_batch_steps = 0
+        total_batch_steps = 0
         for epoch in range(epochs):
             batch_step = 0
             for sources, targets in self.batch_generator(train_sources, train_targets, batch_size):
                 batch_step += 1
-                cum_batch_steps += 1
+                total_batch_steps += 1
                 encoder_optimizer.zero_grad()
                 decoder_optimizer.zero_grad()
                 loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targets,
@@ -318,12 +320,11 @@ class TrainingSession:
                 nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                self.show_prediction_text(predicted_indexes_batch,targets)
+                self.show_prediction_text(predicted_indexes_batch, targets, total_batch_steps)
                 print(
-                    f'Epoch: {epoch}, Total batch:{cum_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
-                self.writer.add_scalar('loss:', loss.item(), cum_batch_steps)
-                self.writer.add_scalar('belu:', bleu_score_average, cum_batch_steps)
-
+                    f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
+                self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
+                self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
 
         self.save_models()
 
@@ -346,12 +347,13 @@ class TrainingSession:
         return [torch.LongTensor(sequence).to(self.device) for sequence in batch]
 
     @torch.no_grad()
-    def show_prediction_text(self, predicted_indexes_batch, targets):
+    def show_prediction_text(self, predicted_indexes_batch, targets, step):
         random_index = np.random.randint(0, len(predicted_indexes_batch))
         target_text = self.tokenizer.indexes_to_text(targets[random_index].cpu().data.numpy())
         prediction_text = self.tokenizer.indexes_to_text(predicted_indexes_batch[random_index])
-        print(target_text)
-        print(prediction_text)
+        if step % 20 == 0:
+            print(target_text)
+            print(prediction_text)
 
     def save_models(self):
         torch.save(self.encoder.state_dict(), 'encoder-model.dat')
