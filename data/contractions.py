@@ -1,3 +1,5 @@
+#Source of contractions dictionary : https://github.com/kootenpv/contractions
+
 contractions_dict = {
     "ain't": "are not",
     "aren't": "are not",

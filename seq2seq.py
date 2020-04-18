@@ -44,6 +44,7 @@ class EncoderLSTM(nn.Module):
                             batch_first=True)
 
     def forward(self, x):
+        self.lstm.flatten_parameters()
         return self.lstm(x)
 
 
@@ -61,6 +62,7 @@ class DecoderLSTM(nn.Module):
         self.linear = nn.Linear(in_features=hidden_size, out_features=vocab_size)
 
     def forward(self, x, hidden_states):
+        self.lstm.flatten_parameters()
         x = self.embedding(x)
         out, hidden_states = self.lstm(x, hidden_states)
         out = self.linear(out)
@@ -293,7 +295,7 @@ class EncoderDecoder:
                                         smoothing_function=sf.method1,
                                         weights=(0.5, 0.5))
 
-    def predict_response(self, question_text, max_len=10, mode='argmax'):
+    def predict_response(self, question_text, max_len=5, mode='argmax'):
         try:
             question_indexes = self.tokenizer.texts_to_index(sentences=[question_text], raise_unknown=True)
         except KeyError as err:
@@ -301,38 +303,25 @@ class EncoderDecoder:
             return f"Sorry! I don't understand the word : {unknown_word}"
 
         question_indexes = [torch.LongTensor(question).to(self.device) for question in question_indexes]
-        predicted_response_indexes, response_indexes_probabilistic = self._decode_prediction_response(question_indexes,
-                                                                                                      max_len, mode)
+        predicted_response_indexes = self._decode_prediction_response(question_indexes, max_len, mode)
 
-        return self.tokenizer.indexes_to_text(predicted_response_indexes), self.tokenizer.indexes_to_text(
-            response_indexes_probabilistic)
+        return self.tokenizer.indexes_to_text(predicted_response_indexes)
 
-    def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
+    def _decode_prediction_response(self, sources, max_response_length=5, mode='max'):
         encoder_out, encoder_hidden = self._encode(sources)
-        response_indexes_max = []
-        response_indexes_probabilistic = []
-        dot_index = self.tokenizer.word2index['.']
+        response_indexes = []
         for decode_step, source in enumerate(sources):
             decoder_hidden = self._extract_step_hidden_state(encoder_hidden, decode_step)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
-            while len(response_indexes_max) < max_response_length:
+            while len(response_indexes) < max_response_length:
                 decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
                 predicted_index = decoder_out.argmax(dim=2).cpu().item()
-
-                # if mode == 'prob':
-                prob = F.softmax(decoder_out, dim=2)
-                predicted_prob = prob.cpu().flatten().detach().numpy()
-                probabilistic_index = np.random.choice(self.tokenizer.dictionary_size, 1, p=predicted_prob)[0]
-
-                # TODO: Breaking on dot predicition
-                if predicted_index == self.end_token_index or predicted_index == dot_index:
-                    response_indexes_max.append(predicted_index)
+                if predicted_index == self.end_token_index:
+                    response_indexes.append(predicted_index)
                     break
 
-                response_indexes_max.append(predicted_index)
-                response_indexes_probabilistic.append(probabilistic_index)
-
-        return response_indexes_max, response_indexes_probabilistic
+                response_indexes.append(predicted_index)
+        return response_indexes
 
     def load_states(self, encoder, decoder, tokenizer):
         pass
@@ -413,11 +402,10 @@ class TrainingSession:
             print(target_text)
             print(prediction_text)
             print('========================================')
-            question = 'Are you good?'
-            response_max, response_prob = self.encoder_decoder.predict_response(question_text=question, max_len=10)
+            question = 'Are you good'
+            response = self.encoder_decoder.predict_response(question_text=question, max_len=5)
             print('Question:', question)
-            print('Response:', response_max)
-            print('Response:', response_prob)
+            print('Response:', response)
 
     def save_check_point(self, total_batch_steps, check_point_step):
         if total_batch_steps % check_point_step == 0:
