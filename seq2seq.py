@@ -29,6 +29,7 @@ GENRE = 'family'
 BATCH_SIZE = 32
 EPOCHS = 50
 CLIP = 10
+SAVE_CHECK_POINT_STEP = 200
 
 
 class EncoderLSTM(nn.Module):
@@ -144,9 +145,7 @@ class Tokenizer:
 
     def indexes_to_text(self, word_numbers):
         """Converts an array of numbers to a text string"""
-        ignore_index = [self.word2index[self.PADDING_TOKEN],
-                        self.word2index[self.END_TOKEN]
-                        ]
+        ignore_index = [self.word2index[self.PADDING_TOKEN]]
         return " ".join([self.index2word[idx] for idx in word_numbers if idx not in ignore_index])
 
     def fit_on_text(self, text_array):
@@ -177,7 +176,7 @@ class Tokenizer:
             for contraction, expanded in self.contractions_dict.items():
                 text = re.sub(contraction, ' ' + expanded + ' ', text)
 
-        # text = re.sub(r"([.]{3})", r' ', text)
+        text = re.sub(r"([.]{3})", r' ', text)
         text = re.sub(r"([.?!])", r' \1 ', text)
         text = re.sub(r'[^a-zA-Z.?!]+', r' ', text)
         text = re.sub(r'\s+', ' ', text)
@@ -259,7 +258,7 @@ class EncoderDecoder:
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
             predicted_indexes = []
             # Avoid making predictions for the last index in target (<eos>)
-            target = target[:-1]
+            # target = target[:-1]
             for target_idx in target:
                 decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
                 predicted_target = decoder_out.argmax(dim=2)
@@ -302,25 +301,38 @@ class EncoderDecoder:
             return f"Sorry! I don't understand the word : {unknown_word}"
 
         question_indexes = [torch.LongTensor(question).to(self.device) for question in question_indexes]
-        predicted_response_indexes = self._decode_prediction_response(question_indexes, max_len, mode)
+        predicted_response_indexes, response_indexes_probabilistic = self._decode_prediction_response(question_indexes,
+                                                                                                      max_len, mode)
 
-        return self.tokenizer.indexes_to_text(predicted_response_indexes)
+        return self.tokenizer.indexes_to_text(predicted_response_indexes), self.tokenizer.indexes_to_text(
+            response_indexes_probabilistic)
 
     def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
         encoder_out, encoder_hidden = self._encode(sources)
-        response_indexes = []
+        response_indexes_max = []
+        response_indexes_probabilistic = []
+        dot_index = self.tokenizer.word2index['.']
         for decode_step, source in enumerate(sources):
             decoder_hidden = self._extract_step_hidden_state(encoder_hidden, decode_step)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
-            while len(response_indexes) < max_response_length:
+            while len(response_indexes_max) < max_response_length:
                 decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
                 predicted_index = decoder_out.argmax(dim=2).cpu().item()
-                if predicted_index == self.end_token_index:
+
+                # if mode == 'prob':
+                prob = F.softmax(decoder_out, dim=2)
+                predicted_prob = prob.cpu().flatten().detach().numpy()
+                probabilistic_index = np.random.choice(self.tokenizer.dictionary_size, 1, p=predicted_prob)[0]
+
+                # TODO: Breaking on dot predicition
+                if predicted_index == self.end_token_index or predicted_index == dot_index:
+                    response_indexes_max.append(predicted_index)
                     break
 
-                response_indexes.append(predicted_index)
+                response_indexes_max.append(predicted_index)
+                response_indexes_probabilistic.append(probabilistic_index)
 
-        return response_indexes
+        return response_indexes_max, response_indexes_probabilistic
 
     def load_states(self, encoder, decoder, tokenizer):
         pass
@@ -346,7 +358,8 @@ class TrainingSession:
     def train_evaluate(self, train_source, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20):
         pass
 
-    def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20):
+    def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20,
+              check_point_step=200):
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
         print('Received training pairs with sizes :', len(train_sources), len(train_targets))
@@ -365,13 +378,13 @@ class TrainingSession:
                 nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps)
+                self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps, )
                 print(
                     f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
                 self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
                 self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
 
-        self.save_models()
+                self.save_check_point(total_batch_steps, check_point_step)
 
     def batch_generator(self, sources, targets, batch_size, drop_last=False):
         """Creates tensor batches from list of sequences.
@@ -396,21 +409,22 @@ class TrainingSession:
         random_index = np.random.randint(0, len(predicted_indexes_batch))
         target_text = self.tokenizer.indexes_to_text(targets[random_index].cpu().data.numpy())
         prediction_text = self.tokenizer.indexes_to_text(predicted_indexes_batch[random_index])
-        if step % 2 == 0:
+        if step % 20 == 0:
             print(target_text)
             print(prediction_text)
             print('========================================')
             question = 'Are you good?'
-            response = self.encoder_decoder.predict_response(question_text=question, max_len=10)
+            response_max, response_prob = self.encoder_decoder.predict_response(question_text=question, max_len=10)
             print('Question:', question)
-            print('Response:', response)
+            print('Response:', response_max)
+            print('Response:', response_prob)
 
-    def save_models(self):
-        torch.save(self.encoder.state_dict(), 'encoder-model.dat')
-        torch.save(self.decoder.state_dict(), 'decoder-model.dat')
-        joblib.dump(self.tokenizer, 'tokenizer.joblib')
-        self.writer.close()
-        print('Decoder model successfully saved!')
+    def save_check_point(self, total_batch_steps, check_point_step):
+        if total_batch_steps % check_point_step == 0:
+            file_name = f'encoder-decoder_{total_batch_steps}.joblib'
+            joblib.dump(self.encoder_decoder, file_name)
+            self.writer.close()
+            print(f'Checkpoint saved: -> {file_name}')
 
 
 tokenizer = Tokenizer(contractions_dict=contractions_dict, min_token_frequency=MIN_TOKEN_FREQ,
@@ -435,9 +449,11 @@ decoder = DecoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_S
                       embeddings_dims=EMBEDDINGS_DIMS,
                       vocab_size=tokenizer.dictionary_size).to(DEVICE)
 encoder_decoder = EncoderDecoder(encoder, decoder, tokenizer=tokenizer, device=DEVICE)
+
 trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=encoder_decoder, tokenizer=tokenizer,
                           learning_rate=LEARNING_RATE,
                           teacher_forcing_prob=TEACHER_FORCING_PROB,
                           device=DEVICE)
 
-trainer.train(sources_conversation, targets_replies, batch_size=BATCH_SIZE, epochs=EPOCHS)
+trainer.train(sources_conversation, targets_replies, batch_size=BATCH_SIZE, epochs=EPOCHS,
+              check_point_step=SAVE_CHECK_POINT_STEP)
