@@ -105,7 +105,7 @@ class Tokenizer:
             try:
                 tokenized_source = self._tokenize(source_text)
                 tokenized_target = self._tokenize(target_text)
-                if len(tokenized_source) > self.max_length and len(tokenized_target) > self.max_length:
+                if len(tokenized_source) > self.max_length or len(tokenized_target) > self.max_length:
                     continue
             except KeyError:
                 # Ignore a text pair with unknown words
