@@ -94,10 +94,16 @@ class MetaDataParser:
             print(f'{genre}:{len(movies)}')
         return self.genres.keys()
 
-    def get_conversation_pairs(self, genre, randomize=False):
+    def get_conversation_pairs(self, genre=None, randomize=False):
         conversations = []
-        for movie_id in self.genres[genre]:
-            conversations.extend(self.movies[movie_id]['conversations'])
+        if genre is not None:
+            for movie_id in self.genres[genre]:
+                conversations.extend(self.movies[movie_id]['conversations'])
+        else:
+            #Retrun all the  conversations
+            for movie in self.movies.values():
+                conversations.extend(movie['conversations'])
+
         if randomize:
             random.shuffle(conversations)
         return conversations

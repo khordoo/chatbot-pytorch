@@ -22,7 +22,7 @@ LEARNING_RATE = 0.01
 EMBEDDINGS_DIMS = 50
 TEACHER_FORCING_PROB = 0.5
 MAX_TOKEN_LENGTH = 10
-MIN_TOKEN_FREQ = 10
+MIN_TOKEN_FREQ = 3
 HIDDEN_STATE_SIZE = 512
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 GENRE = 'family'
@@ -72,17 +72,23 @@ class DecoderGRU(nn.Module):
                  bidirectional=True):
         super(DecoderGRU, self).__init__()
         self.num_layers = num_layers
+        self.hidden_size = hidden_size
+        self.bidirectional = bidirectional
         self.num_directions = 2 if bidirectional else 1
         self.dropout = 0 if num_layers == 1 else dropout
         self.embedding = nn.Embedding(num_embeddings=input_size, embedding_dim=embeddings_dims)
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
                           batch_first=True, dropout=self.dropout, bidirectional=bidirectional)
-        self.linear = nn.Linear(in_features=self.num_directions * hidden_size, out_features=vocab_size)
+        self.linear = nn.Linear(in_features=hidden_size, out_features=vocab_size)
 
     def forward(self, x, hidden_states):
         self.gru.flatten_parameters()
         x = self.embedding(x)
         out, hidden_states = self.gru(x, hidden_states)
+        if self.bidirectional:
+            # summing the outputs of both directions together
+            out = out[:, :, :self.hidden_size] + out[:, :, self.hidden_size:]
+
         out = self.linear(out)
         return out, hidden_states
 
