@@ -273,14 +273,14 @@ class EncoderDecoder:
                 predicted_indexes.append(predicted_target.item())
                 decoder_outputs.append(decoder_out.squeeze(0))
 
-            target_indexes_flat.extend(target)
+            target_indexes_flat.extend(target.detach())
 
             average_belu_score += self.belu_score(predicted_indexes, target.cpu().data.numpy())
             predicted_indexes_batch.append(predicted_indexes)
 
         decoder_outputs_t = torch.cat(decoder_outputs).to(self.device)
         target_indexes_flat_t = torch.LongTensor(target_indexes_flat).to(self.device)
-        loss = F.cross_entropy(decoder_outputs_t, target_indexes_flat_t)
+        loss = F.cross_entropy(decoder_outputs_t, target_indexes_flat_t, ignore_index=self.pad_token_index)
         average_belu_score /= batch_size
         return loss, average_belu_score, predicted_indexes_batch
 
@@ -419,15 +419,16 @@ parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
                         movie_lines_headers=MOVIE_LINES_HEADERS,
                         movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
 # TODO: after testing
-# parser.load_data()
-# conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
-conversation_pairs = [
-    ['Hi how are you?', 'I am good'],
-    ['How was your day?', 'It was a fantastic day'],
-    ['Good morning!', 'Good morning to you too'],
-    ['How everything is going', 'Things are going great'],
-]
-MIN_TOKEN_FREQ = 0
+parser.load_data()
+conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
+# conversation_pairs = [
+#     ['Hi how are you?', 'I am good'],
+#     ['How was your day?', 'It was a fantastic day'],
+#     ['Good morning!', 'Good morning to you too'],
+#     ['How everything is going', 'Things are going great'],
+# ]
+# EPOCHS = 100
+# MIN_TOKEN_FREQ = 0
 sources_conversation, targets_replies = zip(*conversation_pairs)
 print('Total number of data pars:', len(sources_conversation), 'Total replies:', len(targets_replies))
 tokenizer.fit_on_text(sources_conversation + targets_replies)
