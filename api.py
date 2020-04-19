@@ -1,5 +1,6 @@
 import json
 from flask import Flask, request, abort
+from flask_cors import CORS
 from api.src.chatbot import Chatbot
 from src.seq2seq import EncoderDecoder, EncoderLSTM, DecoderLSTM, Tokenizer, UnrecognizedWordException
 
@@ -7,6 +8,7 @@ directory = '/Users/mahmoodkhordoo/personal/git/Reinforcement-Learning-LSTM-char
 chatbot = Chatbot(saved_models_directory=directory)
 
 app = Flask(__name__)
+CORS(app)
 
 
 @app.route('/chat', methods=['POST', 'GET'])
