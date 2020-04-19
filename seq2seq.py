@@ -205,8 +205,6 @@ class Tokenizer:
 
     @property
     def dictionary_size(self):
-        # TODO:We might need to remove the count of tokens
-        # From the dictionary size
         return len(self.word2index)
 
     @property
@@ -229,7 +227,7 @@ class EncoderDecoder:
            Creates a context vector from the encoder and predicts the full target sequence
            using decoder..
         """
-        encoder_out, encoder_hidden = self._encode(sources)
+        _, encoder_hidden = self._encode(sources)
         loss, average_blue_score_batch, predicted_indexes_batch = self._decode(sources, targets, encoder_hidden,
                                                                                teacher_forcing_prob)
         return loss, average_blue_score_batch, predicted_indexes_batch
@@ -237,7 +235,9 @@ class EncoderDecoder:
     def _encode(self, sources):
         packed_padded_batch = self._pack_pad_batch(sources, self.encoder.embedding)
         packed_out, hidden_states = self.encoder(packed_padded_batch)
-        return self.unpack_padded(packed_out), hidden_states
+        # We just need the encoders's hidden state
+        # So we don't bother unpacking its output
+        return packed_out, hidden_states
 
     def _pack_pad_batch(self, sequences, embeddings):
         sequences_length = list(map(len, sequences))
@@ -253,33 +253,35 @@ class EncoderDecoder:
     def _decode(self, sources, targets, encoder_hidden_states, teacher_forcing_prob):
         batch_size = len(sources)
         average_belu_score = 0
-        loss = 0
         predicted_indexes_batch = []
-        for decode_step, (source, target) in enumerate(zip(sources, targets)):
+        decoder_outputs = []
+        target_indexes_flat = []
+        for decode_step, target in enumerate(targets):
             decoder_hidden = self._extract_step_hidden_state(encoder_hidden_states, decode_step)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
             predicted_indexes = []
-            # Avoid making predictions for the last index in target (<eos>)
-            # target = target[:-1]
             for target_idx in target:
                 decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
                 predicted_target = decoder_out.argmax(dim=2)
-                actual_target = torch.LongTensor([[target_idx]]).to(self.device)
                 # teacher forcing
                 if np.random.random() < teacher_forcing_prob:
-                    decoder_input = actual_target
+                    # Actual target
+                    decoder_input = torch.LongTensor([[target_idx]]).to(self.device)
                 else:
                     decoder_input = predicted_target
-                loss += F.cross_entropy(decoder_out.squeeze(0), actual_target.flatten(),
-                                        ignore_index=self.pad_token_index)
 
                 predicted_indexes.append(predicted_target.item())
+                decoder_outputs.append(decoder_out.squeeze(0))
+
+            target_indexes_flat.extend(target)
 
             average_belu_score += self.belu_score(predicted_indexes, target.cpu().data.numpy())
             predicted_indexes_batch.append(predicted_indexes)
 
+        decoder_outputs_t = torch.cat(decoder_outputs).to(self.device)
+        target_indexes_flat_t = torch.LongTensor(target_indexes_flat).to(self.device)
+        loss = F.cross_entropy(decoder_outputs_t, target_indexes_flat_t)
         average_belu_score /= batch_size
-        loss /= batch_size
         return loss, average_belu_score, predicted_indexes_batch
 
     def _extract_step_hidden_state(self, hidden_states, decode_step):
@@ -295,7 +297,7 @@ class EncoderDecoder:
                                         smoothing_function=sf.method1,
                                         weights=(0.5, 0.5))
 
-    def predict_response(self, question_text, max_len=5, mode='argmax'):
+    def predict_response(self, question_text, max_len=10, mode='argmax'):
         try:
             question_indexes = self.tokenizer.texts_to_index(sentences=[question_text], raise_unknown=True)
         except KeyError as err:
@@ -307,24 +309,19 @@ class EncoderDecoder:
 
         return self.tokenizer.indexes_to_text(predicted_response_indexes)
 
-    def _decode_prediction_response(self, sources, max_response_length=5, mode='max'):
-        encoder_out, encoder_hidden = self._encode(sources)
+    def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
+        _, encoder_hidden = self._encode(sources)
         response_indexes = []
         for decode_step, source in enumerate(sources):
             decoder_hidden = self._extract_step_hidden_state(encoder_hidden, decode_step)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
-            while len(response_indexes) < max_response_length:
+            for _ in range(max_response_length):
                 decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
                 predicted_index = decoder_out.argmax(dim=2).cpu().item()
-                if predicted_index == self.end_token_index:
-                    response_indexes.append(predicted_index)
-                    break
-
                 response_indexes.append(predicted_index)
+                if predicted_index == self.end_token_index:
+                    break
         return response_indexes
-
-    def load_states(self, encoder, decoder, tokenizer):
-        pass
 
 
 class TrainingSession:
@@ -402,8 +399,8 @@ class TrainingSession:
             print(target_text)
             print(prediction_text)
             print('========================================')
-            question = 'Are you good'
-            response = self.encoder_decoder.predict_response(question_text=question, max_len=5)
+            question = 'Hi'
+            response = self.encoder_decoder.predict_response(question_text=question, max_len=10)
             print('Question:', question)
             print('Response:', response)
 
@@ -421,10 +418,16 @@ parser = MetaDataParser(data_directory=DATA_DIRECTORY, delimiter=DELIMITER,
                         movie_titles_headers=MOVIES_TITLE_HEADERS,
                         movie_lines_headers=MOVIE_LINES_HEADERS,
                         movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
-
-parser.load_data()
-conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
-
+# TODO: after testing
+# parser.load_data()
+# conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
+conversation_pairs = [
+    ['Hi how are you?', 'I am good'],
+    ['How was your day?', 'It was a fantastic day'],
+    ['Good morning!', 'Good morning to you too'],
+    ['How everything is going', 'Things are going great'],
+]
+MIN_TOKEN_FREQ = 0
 sources_conversation, targets_replies = zip(*conversation_pairs)
 print('Total number of data pars:', len(sources_conversation), 'Total replies:', len(targets_replies))
 tokenizer.fit_on_text(sources_conversation + targets_replies)
