@@ -27,9 +27,11 @@ HIDDEN_STATE_SIZE = 512
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 GENRE = 'family'
 BATCH_SIZE = 32
-EPOCHS = 50
+DROPOUT = 0.1
 CLIP = 10
-SAVE_CHECK_POINT_STEP = 200
+SAVE_CHECK_POINT_STEP = 50
+BIDIRECTIONAL = True
+EPOCHS = 20
 
 
 class UnrecognizedWordException(Exception):
@@ -37,39 +39,50 @@ class UnrecognizedWordException(Exception):
     pass
 
 
-class EncoderLSTM(nn.Module):
+class EncoderGRU(nn.Module):
     """A simple decoder with word embeddings"""
 
-    def __init__(self, input_size, hidden_size, embeddings_dims, num_layers=1):
-        super(EncoderLSTM, self).__init__()
+    def __init__(self, input_size, hidden_size, embeddings_dims, num_layers=1, dropout=0.0, bidirectional=True):
+        super(EncoderGRU, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.dropout = 0 if num_layers == 1 else dropout
         self.embedding = nn.Embedding(num_embeddings=input_size, embedding_dim=embeddings_dims)
-        self.lstm = nn.LSTM(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
-                            batch_first=True)
+        self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
+                          batch_first=True, dropout=self.dropout, bidirectional=bidirectional)
 
     def forward(self, x):
-        self.lstm.flatten_parameters()
-        return self.lstm(x)
+        self.gru.flatten_parameters()
+        return self.gru(x)
+
+    def init_hidden(self, batch_size):
+        num_layers = self.num_layers
+        if self.bidirectional:
+            num_layers = self.num_layers * 2
+        return torch.zeros(num_layers, batch_size, self.hidden_size)
 
 
-class DecoderLSTM(nn.Module):
+class DecoderGRU(nn.Module):
     """A simple decoder with embedding, and a linear layer to project the output of
-       the layer LSTM to a vocabulary size dimension:  hidden_size -> vocab_size
+       the layer GRU to a vocabulary size dimension:  hidden_size -> vocab_size
     """
 
-    def __init__(self, input_size, hidden_size, embeddings_dims, vocab_size, num_layers=1):
-        super(DecoderLSTM, self).__init__()
+    def __init__(self, input_size, hidden_size, embeddings_dims, vocab_size, num_layers=1, dropout=0.0,
+                 bidirectional=True):
+        super(DecoderGRU, self).__init__()
         self.num_layers = num_layers
+        self.num_directions = 2 if bidirectional else 1
+        self.dropout = 0 if num_layers == 1 else dropout
         self.embedding = nn.Embedding(num_embeddings=input_size, embedding_dim=embeddings_dims)
-        self.lstm = nn.LSTM(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
-                            batch_first=True)
-        self.linear = nn.Linear(in_features=hidden_size, out_features=vocab_size)
+        self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
+                          batch_first=True, dropout=self.dropout, bidirectional=bidirectional)
+        self.linear = nn.Linear(in_features=self.num_directions * hidden_size, out_features=vocab_size)
 
     def forward(self, x, hidden_states):
-        self.lstm.flatten_parameters()
+        self.gru.flatten_parameters()
         x = self.embedding(x)
-        out, hidden_states = self.lstm(x, hidden_states)
+        out, hidden_states = self.gru(x, hidden_states)
         out = self.linear(out)
         return out, hidden_states
 
@@ -292,8 +305,10 @@ class EncoderDecoder:
     def _extract_step_hidden_state(self, hidden_states, decode_step):
         ## LSTM has two hidden states(h,c)
         #  Get those (h,c)) for the current batch item
-        return [hidden_states[0][:, decode_step:decode_step + 1].contiguous(),
-                hidden_states[1][:, decode_step: decode_step + 1].contiguous()]
+        # For LSTM
+        # [hidden_states[0][:, decode_step:decode_step + 1].contiguous(),
+        #  hidden_states[1][:, decode_step: decode_step + 1].contiguous()]
+        return hidden_states[:, decode_step:decode_step + 1, :].contiguous()
 
     def belu_score(self, predicted_seq, reference_sequences):
         sf = bleu_score.SmoothingFunction()
@@ -426,8 +441,8 @@ if __name__ == '__main__':
                             movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
     # TODO: after testing
     parser.load_data()
-    samples=parser.show_sample_dialog(genre='comedy')
-    print(samples)
+    # samples = parser.show_sample_dialog(genre='comedy')
+    # print(samples)
     conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
     # conversation_pairs = [
     #     ['Hi how are you?', 'I am good'],
@@ -443,11 +458,13 @@ if __name__ == '__main__':
     print('Dictionary size:', tokenizer.dictionary_size)
 
     sources_conversation, targets_replies = tokenizer.text_to_index_paris(conversation_pairs)
-    encoder = EncoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
-                          embeddings_dims=EMBEDDINGS_DIMS).to(DEVICE)
-    decoder = DecoderLSTM(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
-                          embeddings_dims=EMBEDDINGS_DIMS,
-                          vocab_size=tokenizer.dictionary_size).to(DEVICE)
+    encoder = EncoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
+                         embeddings_dims=EMBEDDINGS_DIMS, dropout=DROPOUT, bidirectional=BIDIRECTIONAL).to(DEVICE)
+    decoder = DecoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
+                         embeddings_dims=EMBEDDINGS_DIMS,
+                         vocab_size=tokenizer.dictionary_size,
+                         dropout=DROPOUT,
+                         bidirectional=BIDIRECTIONAL).to(DEVICE)
     encoder_decoder = EncoderDecoder(encoder, decoder, tokenizer=tokenizer, device=DEVICE)
 
     trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=encoder_decoder, tokenizer=tokenizer,

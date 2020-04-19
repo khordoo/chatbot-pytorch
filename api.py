@@ -2,7 +2,7 @@ import json
 from flask import Flask, request, abort
 from flask_cors import CORS
 from api.src.chatbot import Chatbot
-from src.seq2seq import EncoderDecoder, EncoderLSTM, DecoderLSTM, Tokenizer, UnrecognizedWordException
+from seq2seq import EncoderDecoder,EncoderGRU, DecoderGRU, Tokenizer, UnrecognizedWordException
 
 directory = '/Users/mahmoodkhordoo/personal/git/Reinforcement-Learning-LSTM-chartbot-pytorch/api/save'
 chatbot = Chatbot(saved_models_directory=directory)
@@ -14,7 +14,7 @@ CORS(app)
 @app.route('/chat', methods=['POST', 'GET'])
 def index():
     if request.method == 'GET':
-        return 'Hi! Its me Chatbot, You can talk to me using the POST request.'
+        return 'Hi! Its me the Chatbot, You can talk to me using the POST request.'
 
     if request.method == 'POST':
         if not request.json:
