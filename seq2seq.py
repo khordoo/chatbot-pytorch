@@ -25,7 +25,7 @@ MAX_TOKEN_LENGTH = 10
 MIN_TOKEN_FREQ = 3
 HIDDEN_STATE_SIZE = 512
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-GENRE = 'family'
+GENRE = None
 BATCH_SIZE = 32
 DROPOUT = 0.1
 CLIP = 10
@@ -38,6 +38,11 @@ class UnrecognizedWordException(Exception):
     """:raise when query text contains texts that are not defined for the chatbot."""
     pass
 
+
+class AttentionLayer(nn.Module):
+    def __init__(self):
+        super(AttentionLayer, self).__init__()
+       
 
 class EncoderGRU(nn.Module):
     """A simple decoder with word embeddings"""

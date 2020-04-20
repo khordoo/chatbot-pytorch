@@ -100,7 +100,7 @@ class MetaDataParser:
             for movie_id in self.genres[genre]:
                 conversations.extend(self.movies[movie_id]['conversations'])
         else:
-            #Retrun all the  conversations
+            #Retrun all the
             for movie in self.movies.values():
                 conversations.extend(movie['conversations'])
 
