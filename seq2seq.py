@@ -42,6 +42,9 @@ class AttentionLayer(nn.Module):
     def __init__(self):
         super(AttentionLayer, self).__init__()
 
+    def dot_score(self, hidden, encoder_output):
+        return torch.sum(hidden * encoder_output, dim=2)
+
 
 class EncoderGRU(nn.Module):
     """A simple decoder with word embeddings"""
@@ -97,6 +100,9 @@ class DecoderGRU(nn.Module):
         self.embedding_dropout = nn.Dropout(dropout)
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
                           batch_first=True, dropout=(0 if num_layers == 1 else dropout))
+        self.linear_encoder_outputs = nn.Linear(in_features=hidden_size, out_features=hidden_size)
+        # not sure why its 2*hidden size in pytorch
+        self.lineear_combined_outputs = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size)
         self.word_mapper = nn.Linear(in_features=hidden_size, out_features=vocab_size)
 
     def forward(self, decoder_input, previous_decoder_hidden, encoder_outputs=None):
@@ -104,8 +110,40 @@ class DecoderGRU(nn.Module):
         emb = self.embedding(decoder_input)
         emb_drop = self.embedding_dropout(emb)
         decoder_out, decoder_hidden_states = self.gru(emb_drop, previous_decoder_hidden)
+        # Calculate attention scores
+
+        attention_weights = self._attention_weights(encoder_outputs, decoder_out)
+        # output, att_weights = self._attention(decoder_out, encoder_outputs)
+
+        # a.ak.a context vector
+        # We want to compress the outputs of all seqeunces into a single sequence
+        # (1,1,6)*(1,6,512) ==> (1,1,512)
+        # the result of wightxendocderoutputs is simillar to decoder out put
+        # multiply decoder outputs by  encoder out and collapse all of them into a single vector
+        # the resulting vector has the same shape as the output of decoder ( since both enc and dec have the same architecture)
+        compressed_encoder_outputs = torch.bmm(attention_weights, encoder_outputs)
+
+        # combines two output each with hidden_size length --> 2*hidden_size
+        combined_encoder_decoder_outputs = torch.cat((compressed_encoder_outputs, decoder_out), 2)
+        # Shrinks from 2*hidden_size --> hidden_size  (
+        combined_size_adjusted = self.lineear_combined_outputs(combined_encoder_decoder_outputs)
+        # compress output ot -1,1 range
+        decoder_out = F.tanh(combined_size_adjusted)
         word_prob = self.word_mapper(decoder_out)
         return word_prob, decoder_hidden_states
+
+    def _attention_weights(self, encoder_outputs, decoder_output):
+        # We use general score formula
+        encoder_outputs = self.linear_encoder_outputs(encoder_outputs)
+        # Add outputs of all neuruns for a single word togheter, to have just a single output for a word (each word in encoder)
+        # [ [n1,n2] ,[n1,n2],[n1,n2 ] *[ [n1,n2] ] --sum -- > [ [n1'] ,[n1'] ,[n3'] ]
+        raw_scaled_encoder_outputs = torch.sum(encoder_outputs * decoder_output, dim=2)
+        # transpose it convert [1,6] ->[6,1]  i.e [ N words , 1]
+        # raw_scaled_encoder_outputs = raw_scaled_encoder_outputs.t()
+        # Attentions weiths are just normalized scaled encoder outputs to range (0,1)
+        attn_weights = F.softmax(raw_scaled_encoder_outputs, dim=1)
+        # make it 3D, from 1 is important [[],[],[]] ->  [[ [],[],[] ]]
+        return attn_weights.unsqueeze(0)
 
 
 class Tokenizer:
@@ -343,7 +381,7 @@ class EncoderDecoder:
         return self.tokenizer.indexes_to_text(predicted_response_indexes)
 
     def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
-        #TODO: needs to be fixed. how to pass initial decoder states  to decoder
+        # TODO: needs to be fixed. how to pass initial decoder states  to decoder
         _, encoder_hidden = self.encoder(sources)
         response_indexes = []
         for decode_step, source in enumerate(sources):
@@ -402,7 +440,7 @@ class TrainingSession:
                 nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                #TODO: uncommnet after implementing the training logic
+                # TODO: uncommnet after implementing the training logic
                 # self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps, )
                 print(
                     f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
