@@ -46,11 +46,13 @@ class AttentionLayer(nn.Module):
 class EncoderGRU(nn.Module):
     """A simple decoder with word embeddings"""
 
-    def __init__(self, input_size, hidden_size, embeddings_dims, num_layers=1, dropout=0.0, bidirectional=True):
+    def __init__(self, input_size, hidden_size, embeddings_dims, num_layers=1, dropout=0.0, bidirectional=True,
+                 device='cpu'):
         super(EncoderGRU, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.bidirectional = bidirectional
+        self.device = device
         self.dropout = 0 if num_layers == 1 else dropout
         self.embedding = nn.Embedding(num_embeddings=input_size, embedding_dim=embeddings_dims)
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
@@ -59,8 +61,21 @@ class EncoderGRU(nn.Module):
     def forward(self, x):
         self.gru.flatten_parameters()
         # TODO : we might need to unpack here
-        # and terun the unpaced versio of output along with the hidden state.
-        return self.gru(x)
+        x = self._pack_pad_embed(x)
+        packed_out, hidden = self.gru(x)
+        output, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_out, batch_first=True)
+        if self.bidirectional:
+            # Sum the results of forward(0) and backward(1) pass together
+            output = output[:, :, :self.hidden_size] + output[:, :, self.hidden_size:]
+            hidden = hidden[0:1, :, :] + hidden[1:, :, :]
+        return output, hidden
+
+    def _pack_pad_embed(self, sequences):
+        sequences_length = list(map(len, sequences))
+        padded_sequences = nn.utils.rnn.pad_sequence(sequences, batch_first=True).to(self.device)
+        embedded_sequences = self.embedding(padded_sequences)
+        return nn.utils.rnn.pack_padded_sequence(embedded_sequences, sequences_length, batch_first=True,
+                                                 enforce_sorted=False).to(self.device)
 
     def init_hidden(self, batch_size):
         num_layers = self.num_layers
@@ -258,30 +273,14 @@ class EncoderDecoder:
            Creates a context vector from the encoder and predicts the full target sequence
            using decoder..
         """
-        _, encoder_hidden = self._encode(sources)
-        loss, average_blue_score_batch, predicted_indexes_batch = self._decode(sources, targets, encoder_hidden,
+
+        encoder_outs, encoder_hidden = self.encoder(sources)
+        loss, average_blue_score_batch, predicted_indexes_batch = self._decode(sources, targets, encoder_outs,
+                                                                               encoder_hidden,
                                                                                teacher_forcing_prob)
         return loss, average_blue_score_batch, predicted_indexes_batch
 
-    def _encode(self, sources):
-        packed_padded_batch = self._pack_pad_batch(sources, self.encoder.embedding)
-        packed_out, hidden_states = self.encoder(packed_padded_batch)
-        # We just need the encoders's hidden state
-        # So we don't bother unpacking its output
-        return packed_out, hidden_states
-
-    def _pack_pad_batch(self, sequences, embeddings):
-        sequences_length = list(map(len, sequences))
-        padded_sequences = nn.utils.rnn.pad_sequence(sequences, batch_first=True).to(self.device)
-        embedded_sequences = embeddings(padded_sequences)
-        return nn.utils.rnn.pack_padded_sequence(embedded_sequences, sequences_length, batch_first=True,
-                                                 enforce_sorted=False).to(self.device)
-
-    def unpack_padded(self, packed_output):
-        unpacked_output, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
-        return unpacked_output
-
-    def _decode(self, sources, targets, encoder_hidden_states, teacher_forcing_prob):
+    def _decode(self, sources, targets, encoder_outs, encoder_hidden_states, teacher_forcing_prob):
         batch_size = len(sources)
         average_belu_score = 0
         predicted_indexes_batch = []
@@ -343,7 +342,7 @@ class EncoderDecoder:
         return self.tokenizer.indexes_to_text(predicted_response_indexes)
 
     def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
-        _, encoder_hidden = self._encode(sources)
+        _, encoder_hidden = self.encoder(sources)
         response_indexes = []
         for decode_step, source in enumerate(sources):
             decoder_hidden = self._extract_step_hidden_state(encoder_hidden, decode_step)
@@ -485,7 +484,7 @@ if __name__ == '__main__':
     sources_conversation, targets_replies = tokenizer.text_to_index_paris(conversation_pairs)
     # Encoder is a bi-directional RNN
     encoder = EncoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
-                         embeddings_dims=EMBEDDINGS_DIMS, dropout=DROPOUT, bidirectional=True).to(DEVICE)
+                         embeddings_dims=EMBEDDINGS_DIMS, dropout=DROPOUT, bidirectional=True, device=DEVICE).to(DEVICE)
     # Note Decoder is a uni-directional RNN
     decoder = DecoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
                          embeddings_dims=EMBEDDINGS_DIMS,
