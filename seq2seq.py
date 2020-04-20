@@ -89,30 +89,23 @@ class DecoderGRU(nn.Module):
        the layer GRU to a vocabulary size dimension:  hidden_size -> vocab_size
     """
 
-    def __init__(self, input_size, hidden_size, embeddings_dims, vocab_size, num_layers=1, dropout=0.0,
-                 bidirectional=True):
+    def __init__(self, input_size, hidden_size, embeddings_dims, vocab_size, num_layers=1, dropout=0.0):
         super(DecoderGRU, self).__init__()
         self.num_layers = num_layers
         self.hidden_size = hidden_size
-        self.bidirectional = bidirectional
-        self.num_directions = 2 if bidirectional else 1
-        self.dropout = 0 if num_layers == 1 else dropout
         self.embedding = nn.Embedding(num_embeddings=input_size, embedding_dim=embeddings_dims)
+        self.embedding_dropout = nn.Dropout(dropout)
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
-                          batch_first=True, dropout=self.dropout, bidirectional=bidirectional)
-        self.linear = nn.Linear(in_features=hidden_size, out_features=vocab_size)
+                          batch_first=True, dropout=(0 if num_layers == 1 else dropout))
+        self.word_mapper = nn.Linear(in_features=hidden_size, out_features=vocab_size)
 
-    def forward(self, x, hidden_states):
+    def forward(self, decoder_input, previous_decoder_hidden, encoder_outputs=None):
         self.gru.flatten_parameters()
-        x = self.embedding(x)
-        out, hidden_states = self.gru(x, hidden_states)
-        if self.bidirectional:
-            # summing the outputs of both directions together
-            out = out[:, :, :self.hidden_size] + out[:, :, self.hidden_size:]
-
-        # TODO : we need attenction here.
-        out = self.linear(out)
-        return out, hidden_states
+        emb = self.embedding(decoder_input)
+        emb_drop = self.embedding_dropout(emb)
+        decoder_out, decoder_hidden_states = self.gru(emb_drop, previous_decoder_hidden)
+        word_prob = self.word_mapper(decoder_out)
+        return word_prob, decoder_hidden_states
 
 
 class Tokenizer:
@@ -268,59 +261,67 @@ class EncoderDecoder:
         self.pad_token_index = 0
         self.end_token_index = self.tokenizer.word2index[self.tokenizer.END_TOKEN]
 
-    def step(self, sources, targets, teacher_forcing_prob):
+    def step(self, batched_sources, batched_targets, teacher_forcing_prob):
         """Takes one full encode-decoder step.
            Creates a context vector from the encoder and predicts the full target sequence
            using decoder..
         """
 
-        encoder_outs, encoder_hidden = self.encoder(sources)
-        loss, average_blue_score_batch, predicted_indexes_batch = self._decode(sources, targets, encoder_outs,
-                                                                               encoder_hidden,
+        batched_encoder_outs, batched_encoder_hidden = self.encoder(batched_sources)
+        loss, average_blue_score_batch, predicted_indexes_batch = self._decode(batched_targets, batched_encoder_outs,
+                                                                               batched_encoder_hidden,
                                                                                teacher_forcing_prob)
         return loss, average_blue_score_batch, predicted_indexes_batch
 
-    def _decode(self, sources, targets, encoder_outs, encoder_hidden_states, teacher_forcing_prob):
-        batch_size = len(sources)
+    def _decode(self, batched_targets, batched_encoder_outs, batched_encoder_hidden_states, teacher_forcing_prob):
+        batch_size = len(batched_targets)
         average_belu_score = 0
         predicted_indexes_batch = []
-        decoder_outputs = []
+        decoder_prob_predictions = []
         target_indexes_flat = []
-        for decode_step, target in enumerate(targets):
-            decoder_hidden = self._extract_step_hidden_state(encoder_hidden_states, decode_step)
+        for batch_idx, target_sequence in enumerate(batched_targets):
+            # Fo initial step we pass the last decoder hiden state to the encoder
+            encoder_hidden = self._extract_encoder_hidden_state(batched_encoder_hidden_states, batch_idx)
+            encoder_outputs = self._extract_encoder_outputs(batched_encoder_outs, batch_idx)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
             predicted_indexes = []
-            for target_idx in target:
-                decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
-                predicted_target = decoder_out.argmax(dim=2)
+            decoder_hidden = encoder_hidden
+            for target_sequence_item in target_sequence:
+                # decoder_input, decoder_hidden, encoder_output
+                # the hidden state here is from previous step not for current input
+                # for the first item it comes from the encoder last hidden state.
+                decoder_predicted_prob, decoder_hidden = self.decoder(decoder_input, decoder_hidden, encoder_outputs)
+                predicted_target = decoder_predicted_prob.argmax(dim=2)
                 # teacher forcing
                 if np.random.random() < teacher_forcing_prob:
                     # Actual target
-                    decoder_input = torch.LongTensor([[target_idx]]).to(self.device)
+                    decoder_input = torch.LongTensor([[target_sequence_item]]).to(self.device)
                 else:
                     decoder_input = predicted_target
 
                 predicted_indexes.append(predicted_target.item())
-                decoder_outputs.append(decoder_out.squeeze(0))
+                decoder_prob_predictions.append(decoder_predicted_prob.squeeze(0))
 
-            target_indexes_flat.extend(target.detach())
+            target_indexes_flat.extend(target_sequence.detach())
 
-            average_belu_score += self.belu_score(predicted_indexes, target.cpu().data.numpy())
+            average_belu_score += self.belu_score(predicted_indexes, target_sequence.cpu().data.numpy())
             predicted_indexes_batch.append(predicted_indexes)
 
-        decoder_outputs_t = torch.cat(decoder_outputs).to(self.device)
+        decoder_outputs_t = torch.cat(decoder_prob_predictions).to(self.device)
         target_indexes_flat_t = torch.LongTensor(target_indexes_flat).to(self.device)
         loss = F.cross_entropy(decoder_outputs_t, target_indexes_flat_t, ignore_index=self.pad_token_index)
         average_belu_score /= batch_size
         return loss, average_belu_score, predicted_indexes_batch
 
-    def _extract_step_hidden_state(self, hidden_states, decode_step):
-        ## LSTM has two hidden states(h,c)
-        #  Get those (h,c)) for the current batch item
-        # For LSTM
-        # [hidden_states[0][:, decode_step:decode_step + 1].contiguous(),
-        #  hidden_states[1][:, decode_step: decode_step + 1].contiguous()]
-        return hidden_states[:, decode_step:decode_step + 1, :].contiguous()
+    def _extract_encoder_hidden_state(self, hidden_states, batch_idx):
+        # tehse are only the last hidden state for each item in the batch
+        return hidden_states[:, batch_idx:batch_idx + 1, :].contiguous()
+
+    def _extract_encoder_outputs(self, outputs, batch_idx):
+        # (batch ,sequence,oututs)
+        # e.g source sequence [1,2,3,4] --> [ [],[] ,[],[]]
+        # we have a decoder output for each item in the source sequence
+        return outputs[batch_idx:batch_idx + 1, :, :].contiguous()
 
     def belu_score(self, predicted_seq, reference_sequences):
         sf = bleu_score.SmoothingFunction()
@@ -342,10 +343,11 @@ class EncoderDecoder:
         return self.tokenizer.indexes_to_text(predicted_response_indexes)
 
     def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
+        #TODO: needs to be fixed. how to pass initial decoder states  to decoder
         _, encoder_hidden = self.encoder(sources)
         response_indexes = []
         for decode_step, source in enumerate(sources):
-            decoder_hidden = self._extract_step_hidden_state(encoder_hidden, decode_step)
+            decoder_hidden = self._extract_encoder_hidden_state(encoder_hidden, decode_step)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
             for _ in range(max_response_length):
                 decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
@@ -400,7 +402,8 @@ class TrainingSession:
                 nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps, )
+                #TODO: uncommnet after implementing the training logic
+                # self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps, )
                 print(
                     f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
                 self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
@@ -489,8 +492,7 @@ if __name__ == '__main__':
     decoder = DecoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
                          embeddings_dims=EMBEDDINGS_DIMS,
                          vocab_size=tokenizer.dictionary_size,
-                         dropout=DROPOUT,
-                         bidirectional=False).to(DEVICE)
+                         dropout=DROPOUT).to(DEVICE)
     encoder_decoder = EncoderDecoder(encoder, decoder, tokenizer=tokenizer, device=DEVICE)
 
     trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=encoder_decoder, tokenizer=tokenizer,
