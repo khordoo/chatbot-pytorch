@@ -432,7 +432,8 @@ class TrainingSession:
 
     def save_check_point(self, total_batch_steps, check_point_step):
         if total_batch_steps % check_point_step == 0:
-            file_name = f'encoder-decoder_{total_batch_steps}.joblib'
+            # keeping only three file. they will be old ones will be overwritten
+            file_name = f'save/encoder-decoder_{total_batch_steps % 3}.joblib'
             joblib.dump(self.encoder_decoder, file_name)
             self.writer.close()
             print(f'Checkpoint saved: -> {file_name}')
@@ -445,7 +446,6 @@ if __name__ == '__main__':
                             movie_titles_headers=MOVIES_TITLE_HEADERS,
                             movie_lines_headers=MOVIE_LINES_HEADERS,
                             movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
-    # TODO: after testing
     parser.load_data()
     # samples = parser.show_sample_dialog(genre='comedy')
     # print(samples)
