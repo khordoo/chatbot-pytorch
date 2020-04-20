@@ -30,7 +30,6 @@ BATCH_SIZE = 32
 DROPOUT = 0.1
 CLIP = 10
 SAVE_CHECK_POINT_STEP = 50
-BIDIRECTIONAL = True
 EPOCHS = 20
 
 
@@ -42,7 +41,7 @@ class UnrecognizedWordException(Exception):
 class AttentionLayer(nn.Module):
     def __init__(self):
         super(AttentionLayer, self).__init__()
-       
+
 
 class EncoderGRU(nn.Module):
     """A simple decoder with word embeddings"""
@@ -59,6 +58,8 @@ class EncoderGRU(nn.Module):
 
     def forward(self, x):
         self.gru.flatten_parameters()
+        # TODO : we might need to unpack here
+        # and terun the unpaced versio of output along with the hidden state.
         return self.gru(x)
 
     def init_hidden(self, batch_size):
@@ -94,6 +95,7 @@ class DecoderGRU(nn.Module):
             # summing the outputs of both directions together
             out = out[:, :, :self.hidden_size] + out[:, :, self.hidden_size:]
 
+        # TODO : we need attenction here.
         out = self.linear(out)
         return out, hidden_states
 
@@ -377,6 +379,10 @@ class TrainingSession:
 
     def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20,
               check_point_step=200):
+        if isinstance(train_sources, list):
+            train_sources = np.array(train_sources)
+            train_targets = np.array(train_targets)
+
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
         print('Received training pairs with sizes :', len(train_sources), len(train_targets))
@@ -403,12 +409,20 @@ class TrainingSession:
 
                 self.save_check_point(total_batch_steps, check_point_step)
 
-    def batch_generator(self, sources, targets, batch_size, drop_last=False):
+    def batch_generator(self, sources, targets, batch_size, shuffle=True, drop_last=False):
         """Creates tensor batches from list of sequences.
            If the source is not exactly dividable by the batch size,
            the last batch would be smaller than the rest and might create a bumpy loss trend.
            drop_last =True will drip that smaller batch.
+           We shuffle the samples per epoch
         """
+        if shuffle:
+            # We shuffle the data before each epoch
+            # sources and targets have the same size
+            random_idx = np.random.choice(len(sources), len(sources), replace=False)
+            sources = sources[random_idx]
+            targets = targets[random_idx]
+
         last_index = len(sources)
         if drop_last:
             last_index -= last_index % batch_size
@@ -416,7 +430,7 @@ class TrainingSession:
         for i in range(0, last_index, batch_size):
             yield self._batch(sources, i, batch_size), self._batch(targets, i, batch_size)
 
-    def _batch(self, source, current_index, batch_size):
+    def _batch(self, source, current_index, batch_size, shuffle=True):
         """Receives a list of sequences and and returns a batch of tensors"""
         batch = source[current_index:current_index + batch_size]
         return [torch.LongTensor(sequence).to(self.device) for sequence in batch]
@@ -451,31 +465,33 @@ if __name__ == '__main__':
                             movie_lines_headers=MOVIE_LINES_HEADERS,
                             movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
     # TODO: after testing
-    parser.load_data()
+    # parser.load_data()
     # samples = parser.show_sample_dialog(genre='comedy')
     # print(samples)
-    conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
-    # conversation_pairs = [
-    #     ['Hi how are you?', 'I am good'],
-    #     ['How was your day?', 'It was a fantastic day'],
-    #     ['Good morning!', 'Good morning to you too'],
-    #     ['How everything is going', 'Things are going great'],
-    # ]
-    # EPOCHS = 100
-    # MIN_TOKEN_FREQ = 0
+    # conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
+    conversation_pairs = [
+        ['Hi how are you?', 'I am good'],
+        ['How was your day?', 'It was a fantastic day'],
+        ['Good morning!', 'Good morning to you too'],
+        ['How everything is going', 'Things are going great'],
+    ]
+    EPOCHS = 100
+    MIN_TOKEN_FREQ = 0
     sources_conversation, targets_replies = zip(*conversation_pairs)
     print('Total number of data pars:', len(sources_conversation), 'Total replies:', len(targets_replies))
     tokenizer.fit_on_text(sources_conversation + targets_replies)
     print('Dictionary size:', tokenizer.dictionary_size)
 
     sources_conversation, targets_replies = tokenizer.text_to_index_paris(conversation_pairs)
+    # Encoder is a bi-directional RNN
     encoder = EncoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
-                         embeddings_dims=EMBEDDINGS_DIMS, dropout=DROPOUT, bidirectional=BIDIRECTIONAL).to(DEVICE)
+                         embeddings_dims=EMBEDDINGS_DIMS, dropout=DROPOUT, bidirectional=True).to(DEVICE)
+    # Note Decoder is a uni-directional RNN
     decoder = DecoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
                          embeddings_dims=EMBEDDINGS_DIMS,
                          vocab_size=tokenizer.dictionary_size,
                          dropout=DROPOUT,
-                         bidirectional=BIDIRECTIONAL).to(DEVICE)
+                         bidirectional=False).to(DEVICE)
     encoder_decoder = EncoderDecoder(encoder, decoder, tokenizer=tokenizer, device=DEVICE)
 
     trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=encoder_decoder, tokenizer=tokenizer,
