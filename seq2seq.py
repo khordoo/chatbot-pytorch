@@ -18,20 +18,20 @@ MOVE_CONVERSATION_SEQUENCE_HEADERS = ['characterID1', 'characterID2', 'movieId',
 DELIMITER = '+++$+++'
 DATA_DIRECTORY = 'data'
 
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.001
 EMBEDDINGS_DIMS = 50
 TEACHER_FORCING_PROB = 0.5
 MAX_TOKEN_LENGTH = 10
 MIN_TOKEN_FREQ = 3
-HIDDEN_STATE_SIZE = 512
+HIDDEN_STATE_SIZE = 256
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 GENRE = 'family'
 BATCH_SIZE = 32
 DROPOUT = 0.1
 CLIP = 10
 SAVE_CHECK_POINT_STEP = 50
-BIDIRECTIONAL = True
 EPOCHS = 20
+PRINT_EVERY = 10
 
 
 class UnrecognizedWordException(Exception):
@@ -39,14 +39,24 @@ class UnrecognizedWordException(Exception):
     pass
 
 
+class AttentionLayer(nn.Module):
+    def __init__(self):
+        super(AttentionLayer, self).__init__()
+
+    def dot_score(self, hidden, encoder_output):
+        return torch.sum(hidden * encoder_output, dim=2)
+
+
 class EncoderGRU(nn.Module):
     """A simple decoder with word embeddings"""
 
-    def __init__(self, input_size, hidden_size, embeddings_dims, num_layers=1, dropout=0.0, bidirectional=True):
+    def __init__(self, input_size, hidden_size, embeddings_dims, num_layers=1, dropout=0.0, bidirectional=True,
+                 device='cpu'):
         super(EncoderGRU, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.bidirectional = bidirectional
+        self.device = device
         self.dropout = 0 if num_layers == 1 else dropout
         self.embedding = nn.Embedding(num_embeddings=input_size, embedding_dim=embeddings_dims)
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
@@ -54,7 +64,22 @@ class EncoderGRU(nn.Module):
 
     def forward(self, x):
         self.gru.flatten_parameters()
-        return self.gru(x)
+        # TODO : we might need to unpack here
+        x = self._pack_pad_embed(x)
+        packed_out, hidden = self.gru(x)
+        output, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_out, batch_first=True)
+        if self.bidirectional:
+            # Sum the results of forward(0) and backward(1) pass together
+            output = output[:, :, :self.hidden_size] + output[:, :, self.hidden_size:]
+            hidden = hidden[0:1, :, :] + hidden[1:, :, :]
+        return output, hidden
+
+    def _pack_pad_embed(self, sequences):
+        sequences_length = list(map(len, sequences))
+        padded_sequences = nn.utils.rnn.pad_sequence(sequences, batch_first=True).to(self.device)
+        embedded_sequences = self.embedding(padded_sequences)
+        return nn.utils.rnn.pack_padded_sequence(embedded_sequences, sequences_length, batch_first=True,
+                                                 enforce_sorted=False).to(self.device)
 
     def init_hidden(self, batch_size):
         num_layers = self.num_layers
@@ -68,29 +93,57 @@ class DecoderGRU(nn.Module):
        the layer GRU to a vocabulary size dimension:  hidden_size -> vocab_size
     """
 
-    def __init__(self, input_size, hidden_size, embeddings_dims, vocab_size, num_layers=1, dropout=0.0,
-                 bidirectional=True):
+    def __init__(self, input_size, hidden_size, embeddings_dims, vocab_size, num_layers=1, dropout=0.0):
         super(DecoderGRU, self).__init__()
         self.num_layers = num_layers
         self.hidden_size = hidden_size
-        self.bidirectional = bidirectional
-        self.num_directions = 2 if bidirectional else 1
-        self.dropout = 0 if num_layers == 1 else dropout
         self.embedding = nn.Embedding(num_embeddings=input_size, embedding_dim=embeddings_dims)
+        self.embedding_dropout = nn.Dropout(dropout)
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
-                          batch_first=True, dropout=self.dropout, bidirectional=bidirectional)
-        self.linear = nn.Linear(in_features=hidden_size, out_features=vocab_size)
+                          batch_first=True, dropout=(0 if num_layers == 1 else dropout))
+        self.Watt = nn.Linear(in_features=hidden_size, out_features=hidden_size, bias=False)
+        # not sure why its 2*hidden size in pytorch
+        # self.lineear_combined_outputs = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+        self.word_mapper = nn.Linear(in_features=2 * hidden_size, out_features=vocab_size)
 
-    def forward(self, x, hidden_states):
+    # My own implenetation
+    def forward(self, decoder_input, previous_decoder_hidden, encoder_outputs=None):
         self.gru.flatten_parameters()
-        x = self.embedding(x)
-        out, hidden_states = self.gru(x, hidden_states)
-        if self.bidirectional:
-            # summing the outputs of both directions together
-            out = out[:, :, :self.hidden_size] + out[:, :, self.hidden_size:]
+        emb = self.embedding(decoder_input)
+        emb_drop = self.embedding_dropout(emb)
+        decoder_out, decoder_hidden_states = self.gru(emb_drop, previous_decoder_hidden)
 
-        out = self.linear(out)
-        return out, hidden_states
+        attention_weights = self._attention_weights(decoder_out, encoder_outputs)
+        # output, att_weights = self._attention(decoder_out, encoder_outputs)
+
+        # a.ak.a context vector
+        # We want to compress the outputs of all seqeunces into a single sequence
+        # (1,1,6)*(1,6,512) ==> (1,1,512)
+        # the result of wightxendocderoutputs is simillar to decoder out put
+        # multiply decoder outputs by  encoder out and collapse all of them into a single vector
+        # the resulting vector has the same shape as the output of decoder ( since both enc and dec have the same architecture)
+        context = torch.bmm(attention_weights.unsqueeze(0), encoder_outputs)
+
+        # combines two output each with hidden_size length --> 2*hidden_size
+        out_combined = torch.cat((context, decoder_out), -1)
+        # Shrinks from 2*hidden_size --> hidden_size  (
+        # combined_size_adjusted = self.lineear_combined_outputs(combined_encoder_decoder_outputs)
+        # compress output ot -1,1 range
+        # decoder_out = torch.tanh(combined_size_adjusted)
+        vocab_logits = self.word_mapper(out_combined)
+        # we jusr teturn the att_weights for visiualization
+        return vocab_logits, decoder_hidden_states
+
+    def _attention_weights(self, decoder_output, encoder_outputs):
+        # We use general score formula
+        out = self.Watt(decoder_output)
+        # Add outputs of all neuruns for a single word togheter, to have just a single output for a word (each word in encoder)
+        # [ [n1,n2] ,[n1,n2],[n1,n2 ] *[ [n1,n2] ] --sum -- > [ [n1'] ,[n1'] ,[n3'] ]
+        # raw_scaled_encoder_outputs = torch.sum(encoder_outputs * decoder_output, dim=2)
+        # out2 = out.view(1, -1, 1)
+        # combined = encoder_outputs.bmm(out2)
+        # final = combined.squeeze(-1)
+        return encoder_outputs.bmm(out.view(1, -1, 1)).squeeze(-1)
 
 
 class Tokenizer:
@@ -246,75 +299,67 @@ class EncoderDecoder:
         self.pad_token_index = 0
         self.end_token_index = self.tokenizer.word2index[self.tokenizer.END_TOKEN]
 
-    def step(self, sources, targets, teacher_forcing_prob):
+    def step(self, batched_sources, batched_targets, teacher_forcing_prob):
         """Takes one full encode-decoder step.
            Creates a context vector from the encoder and predicts the full target sequence
            using decoder..
         """
-        _, encoder_hidden = self._encode(sources)
-        loss, average_blue_score_batch, predicted_indexes_batch = self._decode(sources, targets, encoder_hidden,
+
+        batched_encoder_outs, batched_encoder_hidden = self.encoder(batched_sources)
+        loss, average_blue_score_batch, predicted_indexes_batch = self._decode(batched_targets, batched_encoder_outs,
+                                                                               batched_encoder_hidden,
                                                                                teacher_forcing_prob)
         return loss, average_blue_score_batch, predicted_indexes_batch
 
-    def _encode(self, sources):
-        packed_padded_batch = self._pack_pad_batch(sources, self.encoder.embedding)
-        packed_out, hidden_states = self.encoder(packed_padded_batch)
-        # We just need the encoders's hidden state
-        # So we don't bother unpacking its output
-        return packed_out, hidden_states
-
-    def _pack_pad_batch(self, sequences, embeddings):
-        sequences_length = list(map(len, sequences))
-        padded_sequences = nn.utils.rnn.pad_sequence(sequences, batch_first=True).to(self.device)
-        embedded_sequences = embeddings(padded_sequences)
-        return nn.utils.rnn.pack_padded_sequence(embedded_sequences, sequences_length, batch_first=True,
-                                                 enforce_sorted=False).to(self.device)
-
-    def unpack_padded(self, packed_output):
-        unpacked_output, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
-        return unpacked_output
-
-    def _decode(self, sources, targets, encoder_hidden_states, teacher_forcing_prob):
-        batch_size = len(sources)
+    def _decode(self, batched_targets, batched_encoder_outs, batched_encoder_hidden_states, teacher_forcing_prob):
+        batch_size = len(batched_targets)
         average_belu_score = 0
         predicted_indexes_batch = []
-        decoder_outputs = []
+        decoder_prob_predictions = []
         target_indexes_flat = []
-        for decode_step, target in enumerate(targets):
-            decoder_hidden = self._extract_step_hidden_state(encoder_hidden_states, decode_step)
+        for batch_idx, target_sequence in enumerate(batched_targets):
+            # Fo initial step we pass the last decoder hiden state to the encoder
+            encoder_hidden = self._extract_encoder_hidden_state(batched_encoder_hidden_states, batch_idx)
+            encoder_outputs = self._extract_encoder_outputs(batched_encoder_outs, batch_idx)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
             predicted_indexes = []
-            for target_idx in target:
-                decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
-                predicted_target = decoder_out.argmax(dim=2)
+            decoder_hidden = encoder_hidden
+            for target_sequence_item in target_sequence:
+                # decoder_input, decoder_hidden, encoder_output
+                # the hidden state here is from previous step not for current input
+                # for the first item it comes from the encoder last hidden state.
+                decoder_predicted_prob, decoder_hidden = self.decoder(decoder_input, decoder_hidden, encoder_outputs)
+                predicted_target = decoder_predicted_prob.argmax(dim=2)
                 # teacher forcing
                 if np.random.random() < teacher_forcing_prob:
                     # Actual target
-                    decoder_input = torch.LongTensor([[target_idx]]).to(self.device)
+                    decoder_input = torch.LongTensor([[target_sequence_item]]).to(self.device)
                 else:
                     decoder_input = predicted_target
 
                 predicted_indexes.append(predicted_target.item())
-                decoder_outputs.append(decoder_out.squeeze(0))
+                decoder_prob_predictions.append(decoder_predicted_prob.squeeze(0))
 
-            target_indexes_flat.extend(target.detach())
+            target_indexes_flat.extend(target_sequence.detach())
 
-            average_belu_score += self.belu_score(predicted_indexes, target.cpu().data.numpy())
+            average_belu_score += self.belu_score(predicted_indexes, target_sequence.cpu().data.numpy())
             predicted_indexes_batch.append(predicted_indexes)
 
-        decoder_outputs_t = torch.cat(decoder_outputs).to(self.device)
+        decoder_outputs_t = torch.cat(decoder_prob_predictions).to(self.device)
         target_indexes_flat_t = torch.LongTensor(target_indexes_flat).to(self.device)
         loss = F.cross_entropy(decoder_outputs_t, target_indexes_flat_t, ignore_index=self.pad_token_index)
         average_belu_score /= batch_size
         return loss, average_belu_score, predicted_indexes_batch
 
-    def _extract_step_hidden_state(self, hidden_states, decode_step):
-        ## LSTM has two hidden states(h,c)
-        #  Get those (h,c)) for the current batch item
-        # For LSTM
-        # [hidden_states[0][:, decode_step:decode_step + 1].contiguous(),
-        #  hidden_states[1][:, decode_step: decode_step + 1].contiguous()]
-        return hidden_states[:, decode_step:decode_step + 1, :].contiguous()
+    def _extract_encoder_hidden_state(self, hidden_states, batch_idx):
+        # tehse are only the last hidden state for each item in the batch
+        return hidden_states[:, batch_idx:batch_idx + 1, :].contiguous()
+
+    def _extract_encoder_outputs(self, outputs, batch_idx):
+        # (batch ,sequence,oututs)
+        # e.g source sequence [1,2,3,4] --> [ [],[] ,[],[]]
+        # we have a decoder output for each item in the source sequence
+        return outputs[batch_idx:batch_idx + 1, :, :].contiguous()
 
     def belu_score(self, predicted_seq, reference_sequences):
         sf = bleu_score.SmoothingFunction()
@@ -336,13 +381,15 @@ class EncoderDecoder:
         return self.tokenizer.indexes_to_text(predicted_response_indexes)
 
     def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
-        _, encoder_hidden = self._encode(sources)
+        encoder_outputs_batched, encoder_hidden_batched = self.encoder(sources)
         response_indexes = []
         for decode_step, source in enumerate(sources):
-            decoder_hidden = self._extract_step_hidden_state(encoder_hidden, decode_step)
+            encoder_hidden = self._extract_encoder_hidden_state(encoder_hidden_batched, decode_step)
+            encoder_outputs = self._extract_encoder_outputs(encoder_outputs_batched, decode_step)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
+            decoder_hidden = encoder_hidden
             for _ in range(max_response_length):
-                decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
+                decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden, encoder_outputs)
                 predicted_index = decoder_out.argmax(dim=2).cpu().item()
                 response_indexes.append(predicted_index)
                 if predicted_index == self.end_token_index:
@@ -354,12 +401,13 @@ class TrainingSession:
     """A container class that runs the training job"""
 
     def __init__(self, encoder, decoder, encoder_decoder, tokenizer, device, learning_rate,
-                 teacher_forcing_prob):
+                 teacher_forcing_prob, print_every):
         self.encoder = encoder
         self.decoder = decoder
         self.encoder_decoder = encoder_decoder
         self.tokenizer = tokenizer
         self.device = device
+        self.print_every = print_every
         self.learning_rate = learning_rate
         self.teacher_forcing_prob = teacher_forcing_prob
         self.start_token_index = self.tokenizer.start_token_index
@@ -372,6 +420,10 @@ class TrainingSession:
 
     def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20,
               check_point_step=200):
+        if isinstance(train_sources, list):
+            train_sources = np.array(train_sources)
+            train_targets = np.array(train_targets)
+
         encoder_optimizer = torch.optim.Adam(self.encoder_decoder.encoder.parameters(), lr=self.learning_rate)
         decoder_optimizer = torch.optim.Adam(self.encoder_decoder.decoder.parameters(), lr=self.learning_rate)
         print('Received training pairs with sizes :', len(train_sources), len(train_targets))
@@ -386,24 +438,34 @@ class TrainingSession:
                 loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targets,
                                                                                               teacher_forcing_prob=teacher_forcing_prob)
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.encoder.parameters(), CLIP)
-                nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
+                _ = nn.utils.clip_grad_norm_(self.encoder.parameters(), CLIP)
+                _ = nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps, )
-                print(
-                    f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
-                self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
-                self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
+
+                if total_batch_steps % self.print_every == 0:
+                    self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps)
+                    print(
+                        f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
+                    self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
+                    self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
 
                 self.save_check_point(total_batch_steps, check_point_step)
 
-    def batch_generator(self, sources, targets, batch_size, drop_last=False):
+    def batch_generator(self, sources, targets, batch_size, shuffle=False, drop_last=True):
         """Creates tensor batches from list of sequences.
            If the source is not exactly dividable by the batch size,
            the last batch would be smaller than the rest and might create a bumpy loss trend.
            drop_last =True will drip that smaller batch.
+           We shuffle the samples per epoch
         """
+        if shuffle:
+            # We shuffle the data before each epoch
+            # sources and targets have the same size
+            random_idx = np.random.choice(len(sources), len(sources), replace=False)
+            sources = sources[random_idx]
+            targets = targets[random_idx]
+
         last_index = len(sources)
         if drop_last:
             last_index -= last_index % batch_size
@@ -411,7 +473,7 @@ class TrainingSession:
         for i in range(0, last_index, batch_size):
             yield self._batch(sources, i, batch_size), self._batch(targets, i, batch_size)
 
-    def _batch(self, source, current_index, batch_size):
+    def _batch(self, source, current_index, batch_size, shuffle=True):
         """Receives a list of sequences and and returns a batch of tensors"""
         batch = source[current_index:current_index + batch_size]
         return [torch.LongTensor(sequence).to(self.device) for sequence in batch]
@@ -464,18 +526,20 @@ if __name__ == '__main__':
     print('Dictionary size:', tokenizer.dictionary_size)
 
     sources_conversation, targets_replies = tokenizer.text_to_index_paris(conversation_pairs)
+    # Encoder is a bi-directional RNN
     encoder = EncoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
-                         embeddings_dims=EMBEDDINGS_DIMS, dropout=DROPOUT, bidirectional=BIDIRECTIONAL).to(DEVICE)
+                         embeddings_dims=EMBEDDINGS_DIMS, dropout=DROPOUT, bidirectional=True, device=DEVICE).to(DEVICE)
+    # Note Decoder is a uni-directional RNN
     decoder = DecoderGRU(input_size=tokenizer.dictionary_size, hidden_size=HIDDEN_STATE_SIZE,
                          embeddings_dims=EMBEDDINGS_DIMS,
                          vocab_size=tokenizer.dictionary_size,
-                         dropout=DROPOUT,
-                         bidirectional=BIDIRECTIONAL).to(DEVICE)
+                         dropout=DROPOUT).to(DEVICE)
     encoder_decoder = EncoderDecoder(encoder, decoder, tokenizer=tokenizer, device=DEVICE)
 
     trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=encoder_decoder, tokenizer=tokenizer,
                               learning_rate=LEARNING_RATE,
                               teacher_forcing_prob=TEACHER_FORCING_PROB,
+                              print_every=PRINT_EVERY,
                               device=DEVICE)
 
     trainer.train(sources_conversation, targets_replies, batch_size=BATCH_SIZE, epochs=EPOCHS,
