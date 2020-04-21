@@ -18,19 +18,20 @@ MOVE_CONVERSATION_SEQUENCE_HEADERS = ['characterID1', 'characterID2', 'movieId',
 DELIMITER = '+++$+++'
 DATA_DIRECTORY = 'data'
 
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.001
 EMBEDDINGS_DIMS = 50
 TEACHER_FORCING_PROB = 0.5
 MAX_TOKEN_LENGTH = 10
 MIN_TOKEN_FREQ = 3
-HIDDEN_STATE_SIZE = 512
+HIDDEN_STATE_SIZE = 256
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-GENRE = None
+GENRE = 'family'
 BATCH_SIZE = 32
 DROPOUT = 0.1
 CLIP = 10
 SAVE_CHECK_POINT_STEP = 50
 EPOCHS = 20
+PRINT_EVERY = 10
 
 
 class UnrecognizedWordException(Exception):
@@ -100,19 +101,19 @@ class DecoderGRU(nn.Module):
         self.embedding_dropout = nn.Dropout(dropout)
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
                           batch_first=True, dropout=(0 if num_layers == 1 else dropout))
-        self.linear_encoder_outputs = nn.Linear(in_features=hidden_size, out_features=hidden_size)
+        self.Watt = nn.Linear(in_features=hidden_size, out_features=hidden_size, bias=False)
         # not sure why its 2*hidden size in pytorch
-        self.lineear_combined_outputs = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size)
-        self.word_mapper = nn.Linear(in_features=hidden_size, out_features=vocab_size)
+        # self.lineear_combined_outputs = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+        self.word_mapper = nn.Linear(in_features=2 * hidden_size, out_features=vocab_size)
 
+    # My own implenetation
     def forward(self, decoder_input, previous_decoder_hidden, encoder_outputs=None):
         self.gru.flatten_parameters()
         emb = self.embedding(decoder_input)
         emb_drop = self.embedding_dropout(emb)
         decoder_out, decoder_hidden_states = self.gru(emb_drop, previous_decoder_hidden)
-        # Calculate attention scores
 
-        attention_weights = self._attention_weights(encoder_outputs, decoder_out)
+        attention_weights = self._attention_weights(decoder_out, encoder_outputs)
         # output, att_weights = self._attention(decoder_out, encoder_outputs)
 
         # a.ak.a context vector
@@ -121,29 +122,28 @@ class DecoderGRU(nn.Module):
         # the result of wightxendocderoutputs is simillar to decoder out put
         # multiply decoder outputs by  encoder out and collapse all of them into a single vector
         # the resulting vector has the same shape as the output of decoder ( since both enc and dec have the same architecture)
-        compressed_encoder_outputs = torch.bmm(attention_weights, encoder_outputs)
+        context = torch.bmm(attention_weights.unsqueeze(0), encoder_outputs)
 
         # combines two output each with hidden_size length --> 2*hidden_size
-        combined_encoder_decoder_outputs = torch.cat((compressed_encoder_outputs, decoder_out), 2)
+        out_combined = torch.cat((context, decoder_out), -1)
         # Shrinks from 2*hidden_size --> hidden_size  (
-        combined_size_adjusted = self.lineear_combined_outputs(combined_encoder_decoder_outputs)
+        # combined_size_adjusted = self.lineear_combined_outputs(combined_encoder_decoder_outputs)
         # compress output ot -1,1 range
-        decoder_out = F.tanh(combined_size_adjusted)
-        word_prob = self.word_mapper(decoder_out)
-        return word_prob, decoder_hidden_states
+        # decoder_out = torch.tanh(combined_size_adjusted)
+        vocab_logits = self.word_mapper(out_combined)
+        # we jusr teturn the att_weights for visiualization
+        return vocab_logits, decoder_hidden_states
 
-    def _attention_weights(self, encoder_outputs, decoder_output):
+    def _attention_weights(self, decoder_output, encoder_outputs):
         # We use general score formula
-        encoder_outputs = self.linear_encoder_outputs(encoder_outputs)
+        out = self.Watt(decoder_output)
         # Add outputs of all neuruns for a single word togheter, to have just a single output for a word (each word in encoder)
         # [ [n1,n2] ,[n1,n2],[n1,n2 ] *[ [n1,n2] ] --sum -- > [ [n1'] ,[n1'] ,[n3'] ]
-        raw_scaled_encoder_outputs = torch.sum(encoder_outputs * decoder_output, dim=2)
-        # transpose it convert [1,6] ->[6,1]  i.e [ N words , 1]
-        # raw_scaled_encoder_outputs = raw_scaled_encoder_outputs.t()
-        # Attentions weiths are just normalized scaled encoder outputs to range (0,1)
-        attn_weights = F.softmax(raw_scaled_encoder_outputs, dim=1)
-        # make it 3D, from 1 is important [[],[],[]] ->  [[ [],[],[] ]]
-        return attn_weights.unsqueeze(0)
+        # raw_scaled_encoder_outputs = torch.sum(encoder_outputs * decoder_output, dim=2)
+        # out2 = out.view(1, -1, 1)
+        # combined = encoder_outputs.bmm(out2)
+        # final = combined.squeeze(-1)
+        return encoder_outputs.bmm(out.view(1, -1, 1)).squeeze(-1)
 
 
 class Tokenizer:
@@ -381,14 +381,15 @@ class EncoderDecoder:
         return self.tokenizer.indexes_to_text(predicted_response_indexes)
 
     def _decode_prediction_response(self, sources, max_response_length=10, mode='max'):
-        # TODO: needs to be fixed. how to pass initial decoder states  to decoder
-        _, encoder_hidden = self.encoder(sources)
+        encoder_outputs_batched, encoder_hidden_batched = self.encoder(sources)
         response_indexes = []
         for decode_step, source in enumerate(sources):
-            decoder_hidden = self._extract_encoder_hidden_state(encoder_hidden, decode_step)
+            encoder_hidden = self._extract_encoder_hidden_state(encoder_hidden_batched, decode_step)
+            encoder_outputs = self._extract_encoder_outputs(encoder_outputs_batched, decode_step)
             decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
+            decoder_hidden = encoder_hidden
             for _ in range(max_response_length):
-                decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
+                decoder_out, decoder_hidden = self.decoder(decoder_input, decoder_hidden, encoder_outputs)
                 predicted_index = decoder_out.argmax(dim=2).cpu().item()
                 response_indexes.append(predicted_index)
                 if predicted_index == self.end_token_index:
@@ -400,12 +401,13 @@ class TrainingSession:
     """A container class that runs the training job"""
 
     def __init__(self, encoder, decoder, encoder_decoder, tokenizer, device, learning_rate,
-                 teacher_forcing_prob):
+                 teacher_forcing_prob, print_every):
         self.encoder = encoder
         self.decoder = decoder
         self.encoder_decoder = encoder_decoder
         self.tokenizer = tokenizer
         self.device = device
+        self.print_every = print_every
         self.learning_rate = learning_rate
         self.teacher_forcing_prob = teacher_forcing_prob
         self.start_token_index = self.tokenizer.start_token_index
@@ -436,20 +438,21 @@ class TrainingSession:
                 loss, bleu_score_average, predicted_indexes_batch = self.encoder_decoder.step(sources, targets,
                                                                                               teacher_forcing_prob=teacher_forcing_prob)
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.encoder.parameters(), CLIP)
-                nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
+                _ = nn.utils.clip_grad_norm_(self.encoder.parameters(), CLIP)
+                _ = nn.utils.clip_grad_norm_(self.decoder.parameters(), CLIP)
                 encoder_optimizer.step()
                 decoder_optimizer.step()
-                # TODO: uncommnet after implementing the training logic
-                # self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps, )
-                print(
-                    f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
-                self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
-                self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
+
+                if total_batch_steps % self.print_every == 0:
+                    self._show_prediction_text(predicted_indexes_batch, targets, total_batch_steps)
+                    print(
+                        f'Epoch: {epoch}, Total batch:{total_batch_steps}, Batch:{batch_step},Batch size: {len(sources)},  Loss: {loss.item()}, Belu:{bleu_score_average:.5f}')
+                    self.writer.add_scalar('loss:', loss.item(), total_batch_steps)
+                    self.writer.add_scalar('belu:', bleu_score_average, total_batch_steps)
 
                 self.save_check_point(total_batch_steps, check_point_step)
 
-    def batch_generator(self, sources, targets, batch_size, shuffle=True, drop_last=False):
+    def batch_generator(self, sources, targets, batch_size, shuffle=False, drop_last=True):
         """Creates tensor batches from list of sequences.
            If the source is not exactly dividable by the batch size,
            the last batch would be smaller than the rest and might create a bumpy loss trend.
@@ -505,18 +508,18 @@ if __name__ == '__main__':
                             movie_lines_headers=MOVIE_LINES_HEADERS,
                             movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
     # TODO: after testing
-    # parser.load_data()
+    parser.load_data()
     # samples = parser.show_sample_dialog(genre='comedy')
     # print(samples)
-    # conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
-    conversation_pairs = [
-        ['Hi how are you?', 'I am good'],
-        ['How was your day?', 'It was a fantastic day'],
-        ['Good morning!', 'Good morning to you too'],
-        ['How everything is going', 'Things are going great'],
-    ]
-    EPOCHS = 100
-    MIN_TOKEN_FREQ = 0
+    conversation_pairs = parser.get_conversation_pairs(genre=GENRE, randomize=True)
+    # conversation_pairs = [
+    #     ['Hi how are you?', 'I am good'],
+    #     ['How was your day?', 'It was a fantastic day'],
+    #     ['Good morning!', 'Good morning to you too'],
+    #     ['How everything is going', 'Things are going great'],
+    # ]
+    # EPOCHS = 100
+    # MIN_TOKEN_FREQ = 0
     sources_conversation, targets_replies = zip(*conversation_pairs)
     print('Total number of data pars:', len(sources_conversation), 'Total replies:', len(targets_replies))
     tokenizer.fit_on_text(sources_conversation + targets_replies)
@@ -536,6 +539,7 @@ if __name__ == '__main__':
     trainer = TrainingSession(encoder=encoder, decoder=decoder, encoder_decoder=encoder_decoder, tokenizer=tokenizer,
                               learning_rate=LEARNING_RATE,
                               teacher_forcing_prob=TEACHER_FORCING_PROB,
+                              print_every=PRINT_EVERY,
                               device=DEVICE)
 
     trainer.train(sources_conversation, targets_replies, batch_size=BATCH_SIZE, epochs=EPOCHS,
