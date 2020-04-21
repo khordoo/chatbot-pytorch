@@ -8,6 +8,7 @@ import numpy as np
 from nltk.translate import bleu_score
 import re
 import collections
+import itertools
 import joblib
 from data.contractions import contractions_dict
 
@@ -23,13 +24,13 @@ EMBEDDINGS_DIMS = 50
 TEACHER_FORCING_PROB = 0.5
 MAX_TOKEN_LENGTH = 10
 MIN_TOKEN_FREQ = 3
-HIDDEN_STATE_SIZE = 256
+HIDDEN_STATE_SIZE = 512
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-GENRE = 'family'
+GENRE = 'family'  # None=load all genre
 BATCH_SIZE = 32
 DROPOUT = 0.1
 CLIP = 10
-SAVE_CHECK_POINT_STEP = 50
+CHECKPOINT_EVERY = 5
 EPOCHS = 20
 PRINT_EVERY = 10
 
@@ -102,8 +103,7 @@ class DecoderGRU(nn.Module):
         self.gru = nn.GRU(input_size=embeddings_dims, hidden_size=hidden_size, num_layers=num_layers,
                           batch_first=True, dropout=(0 if num_layers == 1 else dropout))
         self.Watt = nn.Linear(in_features=hidden_size, out_features=hidden_size, bias=False)
-        # not sure why its 2*hidden size in pytorch
-        # self.lineear_combined_outputs = nn.Linear(in_features=2 * hidden_size, out_features=hidden_size, bias=False)
+        # CONCATING CONTEXT AND ENCODER HIDDEN => 2*HIDDEN_SIZE
         self.word_mapper = nn.Linear(in_features=2 * hidden_size, out_features=vocab_size)
 
     # My own implenetation
@@ -319,10 +319,11 @@ class EncoderDecoder:
         target_indexes_flat = []
         for batch_idx, target_sequence in enumerate(batched_targets):
             # Fo initial step we pass the last decoder hiden state to the encoder
-            encoder_hidden = self._extract_encoder_hidden_state(batched_encoder_hidden_states, batch_idx)
-            encoder_outputs = self._extract_encoder_outputs(batched_encoder_outs, batch_idx)
-            decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
             predicted_indexes = []
+            decoder_input = torch.LongTensor([[self.start_token_index]]).to(self.device)
+            encoder_outputs = self._extract_encoder_outputs(batched_encoder_outs, batch_idx)
+            encoder_hidden = self._extract_encoder_hidden_state(batched_encoder_hidden_states, batch_idx)
+
             decoder_hidden = encoder_hidden
             for target_sequence_item in target_sequence:
                 # decoder_input, decoder_hidden, encoder_output
@@ -396,12 +397,23 @@ class EncoderDecoder:
                     break
         return response_indexes
 
+    def save_states(self, step='0'):
+        """Save the encoder,decoder and tokenizer to the file"""
+        torch.save(self.encoder.state_dict(), 'encoder-{}.dat'.format(step))
+        torch.save(self.decoder.state_dict(), 'decoder-{}.dat'.format(step))
+        joblib.dump(self, 'encoder-decoder-{}.joblib'.format(step))
+
+    def load(self, encoder_state_path, decoder_state_path, map_location='cpu'):
+        """Loads the encoder and decoder state dictionaries"""
+        self.encoder.load_state_dict(torch.load(encoder_state_path, map_location=map_location))
+        self.decoder.load_state_dict(torch.load(decoder_state_path, map_location=map_location))
+
 
 class TrainingSession:
     """A container class that runs the training job"""
 
     def __init__(self, encoder, decoder, encoder_decoder, tokenizer, device, learning_rate,
-                 teacher_forcing_prob, print_every):
+                 teacher_forcing_prob, print_every, num_keep_state_files=5):
         self.encoder = encoder
         self.decoder = decoder
         self.encoder_decoder = encoder_decoder
@@ -414,9 +426,7 @@ class TrainingSession:
         self.pad_token_index = self.tokenizer.word2index[self.tokenizer.PADDING_TOKEN]
         self.end_token_index = self.tokenizer.word2index[self.tokenizer.END_TOKEN]
         self.writer = SummaryWriter(comment='-' + datetime.now().isoformat(timespec='seconds'))
-
-    def train_evaluate(self, train_source, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20):
-        pass
+        self.checkpint_cycler = itertools.cycle([*range(num_keep_state_files)])
 
     def train(self, train_sources, train_targets, teacher_forcing_prob=0.5, batch_size=10, epochs=20,
               check_point_step=200):
@@ -483,7 +493,7 @@ class TrainingSession:
         random_index = np.random.randint(0, len(predicted_indexes_batch))
         target_text = self.tokenizer.indexes_to_text(targets[random_index].cpu().data.numpy())
         prediction_text = self.tokenizer.indexes_to_text(predicted_indexes_batch[random_index])
-        if step % 20 == 0:
+        if step % self.print_every == 0:
             print(target_text)
             print(prediction_text)
             print('========================================')
@@ -494,11 +504,10 @@ class TrainingSession:
 
     def save_check_point(self, total_batch_steps, check_point_step):
         if total_batch_steps % check_point_step == 0:
-            # keeping only three file. they will be old ones will be overwritten
-            file_name = f'save/encoder-decoder_{total_batch_steps % 3}.joblib'
-            joblib.dump(self.encoder_decoder, file_name)
-            self.writer.close()
-            print(f'Checkpoint saved: -> {file_name}')
+            # overwriting old save states in a cycle
+            loop_indexer = next(self.checkpint_cycler)
+            self.encoder_decoder.save_states(step=loop_indexer)
+            print(f'Checkpoint saved: -> {loop_indexer}')
 
 
 if __name__ == '__main__':
@@ -543,4 +552,4 @@ if __name__ == '__main__':
                               device=DEVICE)
 
     trainer.train(sources_conversation, targets_replies, batch_size=BATCH_SIZE, epochs=EPOCHS,
-                  check_point_step=SAVE_CHECK_POINT_STEP)
+                  check_point_step=CHECKPOINT_EVERY)
