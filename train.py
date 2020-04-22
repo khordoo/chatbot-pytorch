@@ -3,7 +3,7 @@ from src.data_loader import DialogLoaderTransformer
 from src.model import EncoderGRU
 from src.model import DecoderGRU
 from src.model import EncoderDecoderMediator
-from src.trainer import TrainingSession
+from src.session import TrainingSession
 from src.tokenizer import Tokenizer
 from data.contractions import contractions_dict
 

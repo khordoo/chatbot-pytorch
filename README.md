@@ -1,8 +1,8 @@
-# Training Chatbot using Reinforcement Learning and LSTM
+# Training Chatbot using Reinforcement Learning and Encoder-decoder using Pytorch
 Using Reinforcement Learning and Recurrent Neural Networks to build a chat bot
-The chatbot.
+The chatbot. The recurrent networks uses the encoder-decoder architecture with attention.
 This is an End-toEnd solution we will create, train, test, deploy the model on the AWS infrastructure. 
-I have also created a front end to communicate with the model through the rest api.
+I have also created a front end to communicate with the model through an api endpoint.
 
 Here's an screen shot of the application:
 
@@ -29,15 +29,17 @@ The dialogs in raw format does not provide a question-response format which we n
  extract the dialogs based on a specific genre.
  
 The data needs to be downloaded and extracted into the data folder.Due to the relatively small amount of dataset, 
-We keep the loaded dialogs in memory for fast processing and pass the processed dialog pait directly to our training routing for training. 
+We keep the loaded dialogs in memory for fast processing and pass the processed dialog directly to our training routing for training. 
 
 
 In here is a sample dialog from a comedy genre :
 ```
-I'll see you next time.
-Sure. Bye.
-How are you?
-Better than ever.
+Why are you doing this?
+I just wanted to keep an eye on you. 
+Where did everything go?'
+I sold it all at auction.
+Seriously?
+Yes.
 ```
 
 ### References

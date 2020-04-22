@@ -2,7 +2,7 @@ import os
 import json
 from flask import Flask, request, abort
 from flask_cors import CORS
-from api.src.chatbot import Chatbot
+from api.chatbot import Chatbot
 
 BASE_DIRECTORY = os.path.dirname(__file__)
 
