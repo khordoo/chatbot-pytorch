@@ -1,7 +1,7 @@
 # Training Chatbot using Reinforcement Learning and Encoder-decoder using Pytorch
 Using Reinforcement Learning and Recurrent Neural Networks to build a chat bot
 The chatbot. The recurrent networks uses the encoder-decoder architecture with attention.
-This is an End-toEnd solution we will create, train, test, deploy the model on the AWS infrastructure. 
+This is an End-to-End solution we will create, train, test, deploy the model on the AWS infrastructure. 
 I have also created a front end to communicate with the model through an api endpoint.
 
 Here's an screen shot of the application:
@@ -26,7 +26,7 @@ I used the Cornell Movie-Dialogs Corpus dataset which contains structured dialog
 The dialogs in raw format does not provide a question-response format which we need to our chatbot. as a result,
  a wrote a custom script to perform some pre-processing to extract,parse and transform the data into a form suitable for training.
  Since the data set lso contains some metadata about the genre of the movies, I wrote a custom filtering option to be able to 
- extract the dialogs based on a specific genre.
+ extract the dialogs based on a specific genre.However, the bot is trained on movie dialogs from all the genres.
  
 The data needs to be downloaded and extracted into the data folder.Due to the relatively small amount of dataset, 
 We keep the loaded dialogs in memory for fast processing and pass the processed dialog directly to our training routing for training. 
@@ -41,6 +41,18 @@ I sold it all at auction.
 Seriously?
 Yes.
 ```
+
+To make the model converge faster, some filtering were applied to the data. 
+- Relatively shorter sentences were used for training. ( Max length of 10) 
+- Vocabulary size was reduced
+
+During the data loading, the we count of occurrences for every word
+in the dictionary, if the occurrence is fewer than 3 , they are removed from the dictionary. Subsequently 
+if a sentence contains any removed word it will not be included in the training data.
+
+### BLEU Score
+To keep track of the training progress, in addition to loss, the BLEU score is calculated during the training. For this the bleu_score function
+from the NLTK library is used.
 
 ### References
 1. [Recurrent Models of Visual Attention](https://arxiv.org/abs/1406.6247) by Volodymyr Mnih and others, 2014 
