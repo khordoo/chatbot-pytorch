@@ -2,11 +2,19 @@
 The data is from the Cornel Movies Dialogs Corpus
 https://www.cs.cornell.edu/~cristian/Cornell_Movie-Dialogs_Corpus.html
 """
-
+import random
+import logging
 from collections import defaultdict
 from ast import literal_eval
 import numpy as np
-import random
+
+logging.basicConfig(format='%(asctime)-15s %(message)s', level=logging.INFO)
+
+MOVIES_TITLE_HEADERS = ['movieId', 'title', 'year', 'rating', 'votes', 'genres']
+MOVIE_LINES_HEADERS = ['lineId', 'characterId', 'movieId', 'characterName', 'text']
+MOVE_CONVERSATION_SEQUENCE_HEADERS = ['characterID1', 'characterID2', 'movieId', 'lineIds']
+DELIMITER = '+++$+++'
+DATA_DIRECTORY = 'data'
 
 
 class DialogLoaderTransformer:
@@ -21,10 +29,12 @@ class DialogLoaderTransformer:
         self.delimiter = delimiter
         self.movies = {}
         self.genres = defaultdict(list)
+        self.logger = logging.getLogger(__name__)
         self._load_data()
 
     def get_training_data(self, genre=None, shuffle=True):
         """Splits the conversation pairs into two separate arrays, source, target , for training."""
+        self.logger.info('Loading movies dialogs...')
         conversation_pairs = self._get_conversation_pairs(genre, shuffle)
         return zip(*conversation_pairs)
 
@@ -35,8 +45,8 @@ class DialogLoaderTransformer:
         return conversations[start:start + limit]
 
     def display_genres(self):
-        print('Total number of movies', len(self.movies))
-        print('Total number of genres', len(self.genres))
+        self.logger.info('Total number of movies', len(self.movies))
+        self.logger.info('Total number of genres', len(self.genres))
         for genre, movies in self.genres.items():
             print(f'{genre}:{len(movies)}')
         return self.genres.keys()
@@ -47,22 +57,19 @@ class DialogLoaderTransformer:
         self._load_conversations()
 
     def _load_movies_metadata(self):
-        print('Loading movie title metadata...')
         for movie in self._parse('movie_titles_metadata.txt', headers=self.movie_titles_headers):
             genres = literal_eval(movie['genres'].strip())
             self._add_movie(movie)
             self._add_genre(genres, movie)
-        print('Metadata loaded. movies: {}, genres:{}'.format(len(self.movies), len(self.genres)))
+        self.logger.info('Metadata loaded. movies: {}, genres:{}'.format(len(self.movies), len(self.genres)))
 
     def _load_movie_lines(self):
         """loads actual lines(conversation texts)"""
-        print('Loading movie lines...')
         for line_content in self._parse('movie_lines.txt', headers=self.movie_lines_headers):
             self._add_lines(line_content)
 
     def _load_conversations(self):
         """Loads the conversation sequences"""
-        print('Loading conversations....')
         for parsed_line in self._parse('movie_conversations.txt', headers=self.movie_conversation_headers):
             self._add_conversations(parsed_line)
 
@@ -107,7 +114,8 @@ class DialogLoaderTransformer:
             movie['lines'] = {}
         movie['lines'][lines_data['lineId']] = lines_data
 
-    def _get_conversation_pairs(self, genre=None, randomize=True):
+    def _get_conversation_pairs(self, genre=None, shuffle=True):
+        self.logger.info(f'Total movies with {genre} genre are {len(self.genres[genre])}')
         conversations = []
         if genre is not None:
             for movie_id in self.genres[genre]:
@@ -117,7 +125,7 @@ class DialogLoaderTransformer:
             for movie in self.movies.values():
                 conversations.extend(movie['conversations'])
 
-        if randomize:
+        if shuffle:
             random.shuffle(conversations)
-        print('Loaded all the conversations , Total conversation pairs: {}'.format(len(conversations)))
+        self.logger.info('Loaded all the conversations , Total conversation pairs: {}'.format(len(conversations)))
         return conversations

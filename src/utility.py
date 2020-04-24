@@ -11,13 +11,15 @@ class Utility:
         return [torch.tensor(sequence, dtype=dtype).to(device) for sequence in sequences]
 
     @staticmethod
-    def split_train_test(sources, targets, test_fraction=0.5):
+    def split_train_test(sources, targets, test_fraction=None, test_size=None):
         """Splits the sequence and returns the train and test sequences."""
-        test_start_index = int(test_fraction * len(sources))
-        return sources[test_start_index:], \
-               targets[test_start_index:], \
-               sources[:test_start_index], \
-               targets[:test_start_index]
+        if test_size is None:
+           test_size = int(test_fraction * len(sources))
+
+        return sources[test_size:], \
+               targets[test_size:], \
+               sources[:test_size], \
+               targets[:test_size]
 
     @staticmethod
     def batch_generator(sources, targets, batch_size):
@@ -46,7 +48,6 @@ class Utility:
                                         smoothing_function=smoothing_fn.method1,
                                         weights=(0.5, 0.5))
 
-
     @staticmethod
     def evaluate_net(model, batch_source, batch_target, sos_index, device):
         """Evaluates the performance of the model using the test set"""
@@ -63,5 +64,34 @@ class Utility:
                 decoder_input = predicted_index
                 predicted_indexes.append(predicted_index.item())
 
-            bleu_sum += Utility.belu_score(predicted_indexes, reference_sequences=target_sequence)
+            bleu_sum += Utility.belu_score(predicted_indexes, reference_sequences=target_sequence.cpu().numpy())
         return bleu_sum / len(batch_source)
+
+    @staticmethod
+    def predict(source_texts, model, tokenizer, device, max_prediction_len=10):
+        """Receives an array of texts and provdes replies for all texts separately"""
+        assert isinstance(source_texts, list)
+        source_indexes = tokenizer.convert_text_to_number(source_texts)
+        source_indexes = [torch.LongTensor(source_index).to(device) for source_index in source_indexes]
+        sos_index = tokenizer.sos_index
+        eos_index = tokenizer.eos_index
+        encoder_out, batch_encoder_hidden = model.encode(source_indexes)
+        # Doing prediction
+        batch_predicted_texts = []
+        batch_predicted_indexes = []
+        for position in range(len(source_indexes)):
+            encoder_hidden = Utility.get_batch_item(batch_encoder_hidden, position=position)
+            decoder_hidden = encoder_hidden
+            decoder_input = torch.LongTensor([[sos_index]]).to(device)
+            predicted_indexes = []
+            for _ in range(max_prediction_len):
+                decoder_out, decoder_hidden = model.decode(decoder_input, decoder_hidden)
+                predicted_index = decoder_out.argmax(dim=2)
+                decoder_input = predicted_index
+                if predicted_index == eos_index:
+                    break
+                predicted_indexes.append(predicted_index.item())
+            batch_predicted_indexes.append(predicted_indexes)
+            batch_predicted_texts.append(tokenizer.convert_number_to_text(predicted_indexes))
+
+        return batch_predicted_texts, batch_predicted_indexes

@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence, pad_packed_sequence, pack_padded_sequence
@@ -39,3 +40,6 @@ class EncoderDecoder(nn.Module):
         output, hidden_state = self.decoder(embedded, hidden_state)
         projected_out = self.linear(output)
         return projected_out, hidden_state
+
+    def save_state(self, basedir):
+        torch.save(self, os.path.join(basedir, 'model.pt'))

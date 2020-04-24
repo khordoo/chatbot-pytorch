@@ -1,7 +1,12 @@
+import os
 import re
 import collections
-import numpy as np
+import joblib
 import logging
+import numpy as np
+import torch
+
+logging.basicConfig(format='%(asctime)-15s %(message)s' ,level=logging.INFO)
 
 
 class Tokenizer:
@@ -64,7 +69,7 @@ class Tokenizer:
                     continue
             filtered_sources.append(source)
             filtered_targets.append(target)
-        self.logger.info(f'Filter completed, Sequences reduced from {len(filtered_sources)} to {len(filtered_sources)}')
+        self.logger.info(f'Filtering completed, Sequences reduced from {len(source_numbers)} to {len(filtered_sources)}')
         return filtered_sources, filtered_targets
 
     def convert_number_to_text(self, indexes):
@@ -117,7 +122,7 @@ class Tokenizer:
             for word in top_words:
                 self._add_word(word)
 
-        self.logger.info(f'Trimmed dictionary word count:{len(self.word2index)} ')
+        self.logger.info(f'Trimming completed. Updated dictionary word count:{len(self.word2index)} ')
 
     @property
     def dictionary_size(self):
@@ -134,3 +139,7 @@ class Tokenizer:
     @property
     def unknown_index(self):
         return self.word2index[self.UNKNOWN_TOKEN]
+
+    def save_state(self, basedir):
+        torch.save(self, os.path.join(basedir, 'tokenizer.pt'))
+        self.logger.info('Successfully saved the tokenizer on disk.')
