@@ -1,24 +1,23 @@
 import re
 import collections
 import numpy as np
-from src.exceptions import UnrecognizedWordException
+import logging
 
 
 class Tokenizer:
     """This class converts the text into its numerical
     representation and vice versa."""
 
-    def __init__(self, contractions_dict=None, max_sequence_length=20, min_token_frequency=10):
+    def __init__(self, contractions_dict=None):
         self.START_TOKEN = "<sos>"
         self.PADDING_TOKEN = "<pad>"
         self.END_TOKEN = "<eos>"
         self.UNKNOWN_TOKEN = "<unk>"
         self.contractions_dict = contractions_dict
-        self.max_length = max_sequence_length
-        self.min_token_frequency = min_token_frequency
-        self._initialize()
+        self.logger = logging.getLogger(__name__)
+        self._init_dictionary()
 
-    def _initialize(self):
+    def _init_dictionary(self):
         """We reserve 0 index for pad token,
         although we don't do any padding in here."""
         self.word2index = {}
@@ -27,70 +26,53 @@ class Tokenizer:
         for token in [self.PADDING_TOKEN, self.START_TOKEN, self.END_TOKEN, self.UNKNOWN_TOKEN]:
             self._add_word(token)
 
-    def create_dictionary(self, text_array):
+    def fit_on_text(self, text_array, min_keep_frequency=None):
         """Creates a numerical index value for every unique word"""
-        print(f"Creating a dictionary of words from {len(text_array)} sentences. ")
+        self.logger.info(f"Creating a dictionary of words from {len(text_array)} sentences. ")
         for sentence in text_array:
-            sentence = self._normalize(sentence)
+            sentence = self._sanitize(sentence)
             self._add_sentence(sentence)
-        print(f"Dictionary creation completed. Number of unique words:  {len(self.word2index)}")
-        self._trim()
+        self.logger.info(f"Dictionary creation completed. Number of unique words:  {len(self.word2index)}")
 
-    def batch_convert_text_to_index(self, source_texts, target_texts):
-        """We process the source and target sentences together.
-          The reason is that,to be able to discard both
-          source and target if an unknown word found in either of them.
-          This is also the case, for maximum length filtering.
-        """
-        print('Converting words to indexes.')
+        if min_keep_frequency is not None:
+            self._trim_dictionary(min_keep_frequency)
+
+    def convert_text_to_number(self, text_sentences):
+        """Converts text into its numerical representation"""
+        self.logger.info('Converting words to indexes.')
         eos_index = self.word2index[self.END_TOKEN]
-        source_indexes, target_indexes = [], []
-        for source, target in zip(source_texts, target_texts):
-            try:
-                tokenized_source = self._tokenize(source)
-                tokenized_target = self._tokenize(target)
-                if len(tokenized_source) > self.max_length or len(tokenized_target) > self.max_length:
-                    # Ignore the pair, if either of source or target sentence is long
-                    continue
-            except KeyError:
-                # Ignore the pair,if either source or target sentence has an unknown word
-                continue
+        source_indexes = []
+        for source in text_sentences:
+            tokenized_source = self._tokenize(source)
             tokenized_source.append(eos_index)
-            tokenized_target.append(eos_index)
             source_indexes.append(tokenized_source)
-            target_indexes.append(tokenized_target)
 
-        print(f"Tokenized completed: {len(source_indexes)} sources and {len(target_indexes)} targets")
-        return np.array(source_indexes), np.array(target_indexes)
+        self.logger.info(f"Tokenized completed: {len(source_indexes)} text sentences")
+        return np.array(source_indexes)
 
-    def text_to_index(self, sentences, raise_unknown=False):
-        """Convert words in sentences to their numerical index values
+    def filter(self, source_numbers, target_numbers, max_token_size, remove_unknown=True):
+        """Performs filtering on two sequences. Either if item in sequences would be filtered
+           Both items from source and target will be remove if filtering conditions is not true for any of them.
         """
-        indexes = []
-        end_token_index = self.word2index[self.END_TOKEN]
-        unknown_token_index = self.word2index[self.UNKNOWN_TOKEN]
-        for sentence_text in sentences:
-            sentence_text = self._normalize(sentence_text)
-            sentence_index = []
-            for word in sentence_text.strip().lower().split(" "):
-                try:
-                    sentence_index.append(
-                        self.word2index[word])
-                except KeyError:
-                    if raise_unknown:
-                        raise UnrecognizedWordException(f'Unrecognized Word:{word}')
-                    else:
-                        sentence_index.append(unknown_token_index)
-            sentence_index.append(end_token_index)
-            indexes.append(sentence_index)
-        return indexes
+        unknown_token = self.word2index[self.UNKNOWN_TOKEN]
+        filtered_sources, filtered_targets = [], []
+        for source, target in zip(source_numbers, target_numbers):
+            if len(source) > max_token_size or len(target) > max_token_size:
+                continue
+            if remove_unknown:
+                if unknown_token in source or unknown_token in target:
+                    continue
+            filtered_sources.append(source)
+            filtered_targets.append(target)
+        self.logger.info(f'Filter completed, Sequences reduced from {len(filtered_sources)} to {len(filtered_sources)}')
+        return filtered_sources, filtered_targets
 
-    def index_to_text(self, word_numbers):
+    def convert_number_to_text(self, indexes):
         """Converts an array of numbers to a text string"""
-        ignore_index = [self.word2index[self.PADDING_TOKEN]]
-        return " ".join([self.index2word[idx] for idx in word_numbers if idx not in ignore_index])
+        ignore_indexes = [self.eos_index]
+        return " ".join([self.index2word[idx] for idx in indexes if idx not in ignore_indexes])
 
-    def _normalize(self, text):
+    def _sanitize(self, text):
         """Removes numbers and undesired characters from the text."""
         text = text.lower().strip()
         if self.contractions_dict is not None:
@@ -105,9 +87,9 @@ class Tokenizer:
 
     def _tokenize(self, sentence_text):
         """Converts each word to its numerical representation"""
-        sentence_text = self._normalize(sentence_text)
+        sentence_text = self._sanitize(sentence_text)
         return [
-            self.word2index[word]
+            self.word2index.get(word, self.unknown_index)
             for word in sentence_text.strip().split(" ")
         ]
 
@@ -124,17 +106,18 @@ class Tokenizer:
         self.word2index[word] = index
         self.index2word[index] = word
 
-    def _trim(self):
+    def _trim_dictionary(self, min_keep_frequency=0):
+        """Reduce dictionary vocab size based on minimum required word frequency."""
         top_words = [word for word, count in self.word_counter.items()
-                     if count > self.min_token_frequency]
-        print(
-            f'Found {len(self.word2index) - len(top_words)} with frequency less that {self.min_token_frequency}')
+                     if count >= min_keep_frequency]
+        self.logger.info(
+            f'Found {len(self.word2index) - len(top_words)} with frequency less that {min_keep_frequency}')
         if top_words:
-            self._initialize()
+            self._init_dictionary()
             for word in top_words:
                 self._add_word(word)
 
-        print(f'Trimmed dictionary word count:{len(self.word2index)} ')
+        self.logger.info(f'Trimmed dictionary word count:{len(self.word2index)} ')
 
     @property
     def dictionary_size(self):
@@ -147,3 +130,7 @@ class Tokenizer:
     @property
     def eos_index(self):
         return self.word2index[self.END_TOKEN]
+
+    @property
+    def unknown_index(self):
+        return self.word2index[self.UNKNOWN_TOKEN]

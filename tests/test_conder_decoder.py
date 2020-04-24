@@ -24,6 +24,15 @@ class TestEncoderDecoder(unittest.TestCase):
     def test_pad_sequence(self):
         """tests the sequences are padded"""
         inputs = [torch.FloatTensor([1, 2, 3]), torch.FloatTensor(1, 2)]
-        padded=self.encoder_decoder.pack(inputs)
+        padded = self.encoder_decoder.pack(inputs)
+
     def test_encoder_encodes_the_sources(self):
         self.encoder_decoder()
+
+    def test_batch_encode(self):
+        INPUT_SIZE = 10
+        HIDDEN_SIZE = 20
+        EMBEDDIN_DIM = 50
+        VOCAB_SIZE = INPUT_SIZE
+        self.encoder_decoder = EncoderDecoder(input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE,
+                                              embedding_dim=EMBEDDIN_DIM, vocab_size=VOCAB_SIZE, bidirectional=False)

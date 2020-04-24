@@ -105,9 +105,9 @@ class TrainingSession:
            and displayed for visual inspection during the training.
         """
         random_target_index = np.random.randint(0, len(predicted_indexes_batch))
-        target_text = self.tokenizer.index_to_text(targets[random_target_index].cpu().data.numpy())
+        target_text = self.tokenizer.convert_number_to_text(targets[random_target_index].cpu().data.numpy())
         # Retrieves the predicted indexes for the random target sample
-        prediction_text = self.tokenizer.index_to_text(predicted_indexes_batch[random_target_index])
+        prediction_text = self.tokenizer.convert_number_to_text(predicted_indexes_batch[random_target_index])
         if step % self.print_every == 0:
             print('>', target_text)
             print('>', prediction_text)

@@ -40,6 +40,35 @@ class TestTokenizer(unittest.TestCase):
         """tests tokenizer converts text into numbers"""
         input_text = ['pytorch is awesome']
         self.tokenizer.fit_on_text(input_text)
-        text_indexes = self.tokenizer.convert_number_to_text([[4, 5, 6, 2]])
+        text = self.tokenizer.convert_number_to_text([4, 5, 6, 2])
         expected = input_text[0]
-        self.assertEqual(expected, text_indexes[0])
+        self.assertEqual(expected, text)
+
+    def test_filter_is_filtering_long_sentences(self):
+        """testes the filter function removes the long token
+         jointly together from both sources and targets"""
+        source_numbers = [[1, 4], [4, 5, 6], [9]]
+        target_numbers = [[11, 22, 33, 44], [44, 55], [88, 99, 100, 110]]
+
+        filtered_sources, filtered_targets = self.tokenizer.filter(source_numbers, target_numbers,
+                                                                   max_token_size=3,
+                                                                   remove_unknown=False)
+        expected_source = [[4, 5, 6]]
+        expected_targets = [[44, 55]]
+        self.assertListEqual(expected_source[0], filtered_sources[0])
+        self.assertEqual(expected_targets[0], filtered_targets[0])
+
+    def test_filter_removes_token_containing_unknown_token_index(self):
+        """testes the filter function removes with unknown tokens
+        """
+        unknown_index = self.tokenizer.unknown_index
+        source_numbers = [[1, unknown_index], [4, 5], [9]]
+        target_numbers = [[11, 22, 33], [44, unknown_index], [88, 99, 100]]
+
+        filtered_sources, filtered_targets = self.tokenizer.filter(source_numbers, target_numbers,
+                                                                   max_token_size=3,
+                                                                   remove_unknown=True)
+        expected_source = [[9]]
+        expected_targets = [[88, 99, 100]]
+        self.assertListEqual(expected_source[0], filtered_sources[0])
+        self.assertEqual(expected_targets[0], filtered_targets[0])
