@@ -45,3 +45,23 @@ class Utility:
         return bleu_score.sentence_bleu(reference_sequences, predicted_seq,
                                         smoothing_function=smoothing_fn.method1,
                                         weights=(0.5, 0.5))
+
+
+    @staticmethod
+    def evaluate_net(model, batch_source, batch_target, sos_index, device):
+        """Evaluates the performance of the model using the test set"""
+        encoder_out, batch_encoder_hidden = model.encode(batch_source)
+        bleu_sum = 0
+        for position, target_sequence in enumerate(batch_target):
+            encoder_hidden = Utility.get_batch_item(batch_encoder_hidden, position=position)
+            decoder_hidden = encoder_hidden
+            decoder_input = torch.LongTensor([[sos_index]]).to(device)
+            predicted_indexes = []
+            for _ in range(len(target_sequence)):
+                decoder_out, decoder_hidden = model.decode(decoder_input, decoder_hidden)
+                predicted_index = decoder_out.argmax(dim=2)
+                decoder_input = predicted_index
+                predicted_indexes.append(predicted_index.item())
+
+            bleu_sum += Utility.belu_score(predicted_indexes, reference_sequences=target_sequence)
+        return bleu_sum / len(batch_source)

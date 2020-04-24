@@ -109,8 +109,10 @@ if __name__ == '__main__':
             bleu_sum /= len(batch_target)
             blue_scores.append(bleu_sum)
         mean_loss = np.array(losses).mean()
-        mean_bleu = np.array(blue_scores).mean()
+        mean_bleu_train = np.array(blue_scores).mean()
+        mean_bleu_test = Utility.evaluate_net(encoder_decoder, test_source, test_target, tokenizer.sos_index, DEVICE)
         logger.info(
-            f'Epoch:{epoch}, Mean loss:{mean_loss:.4f}, Mean bleu:{mean_bleu:.4f}')
+            f'Epoch:{epoch}, Mean loss:{mean_loss:.4f}, Mean BLEU:{mean_bleu_train:.4f}, Mean Test BLEU:{mean_bleu_test:.4f}')
         writer.add_scalar('Mean loss', mean_loss, epoch)
-        writer.add_scalar('Mean Bleu', mean_bleu, epoch)
+        writer.add_scalar('Mean Bleu', mean_bleu_train, epoch)
+        writer.add_scalar('Mean Test Bleu', mean_bleu_test, epoch)

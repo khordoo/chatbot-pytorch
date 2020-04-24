@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence, pad_packed_sequence, pack_padded_sequence
-import numpy as np
 
 
 class EncoderDecoder(nn.Module):
@@ -40,16 +39,3 @@ class EncoderDecoder(nn.Module):
         output, hidden_state = self.decoder(embedded, hidden_state)
         projected_out = self.linear(output)
         return projected_out, hidden_state
-
-    def _sequence_decode(self, target_sequence, encoder_hidden_state):
-        hidden_state = encoder_hidden_state
-        encoder_input = torch.LongTensor(9)
-        sequence_outputs = []
-
-        for index in target_sequence:
-            embedded = self.embedding(torch.FloatTensor([[[index]]]).to(self.device))
-            output, hidden_state = self.decoder(embedded, hidden_state)
-            sequence_outputs.append(output)
-
-            if np.random.random() < self.teacher_forcing_ration:
-                pass
