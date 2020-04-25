@@ -15,6 +15,7 @@ MOVIE_LINES_HEADERS = ['lineId', 'characterId', 'movieId', 'characterName', 'tex
 MOVE_CONVERSATION_SEQUENCE_HEADERS = ['characterID1', 'characterID2', 'movieId', 'lineIds']
 DELIMITER = '+++$+++'
 DATA_DIRECTORY = 'data'
+random.seed(5871)
 
 
 class DialogLoaderTransformer:

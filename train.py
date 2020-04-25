@@ -20,8 +20,7 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 GENRE = 'comedy'  # None -> all genres
 SAVE_DIR = 'saves'
 MAX_TOKEN_LENGTH = 20
-# TEST_FRACTION = 0.2  # TODO :Reduce to 0.1 in actual run.
-TEST_SIZE=1500
+TEST_FRACTION = 0.05
 MIN_TOKEN_FREQ = 10
 HIDDEN_SIZE = 512
 EMBEDDING_DIM = 50
@@ -32,9 +31,15 @@ BATCH_SIZE = 32
 PRINT_EVERY = 10
 SAVE_CHECKPOINT_EVERY = 10
 LEARNING_RATE = 0.001
-EPOCHS = 20
+EPOCHS = 100
+
+
 
 if __name__ == '__main__':
+
+###########################################################
+#LOAD DATA
+############################################################
     os.makedirs(SAVE_DIR, exist_ok=True)
     tokenizer = Tokenizer(contractions_dict=contractions_dict)
     data_loader = dl.DialogLoaderTransformer(data_directory=dl.DATA_DIRECTORY,
@@ -57,13 +62,16 @@ if __name__ == '__main__':
     target_sequences = Utility.tensorize(target_sequences, dtype=torch.long, device=DEVICE)
 
     train_source, train_target, test_source, test_target = Utility.split_train_test(source_sequences, target_sequences,
-                                                                                    test_size=TEST_SIZE)
+                                                                                    test_fraction=TEST_FRACTION)
 
     encoder_decoder = EncoderDecoder(vocab_size=tokenizer.dictionary_size,
                                      hidden_size=HIDDEN_SIZE,
                                      embedding_dim=EMBEDDING_DIM,
                                      bidirectional=False
                                      ).to(DEVICE)
+#############################################
+# TRAINING
+#############################################
 
     optimizer = torch.optim.Adam(encoder_decoder.parameters(), lr=LEARNING_RATE)
     writer = SummaryWriter(comment='-' + datetime.now().isoformat(timespec='seconds'))

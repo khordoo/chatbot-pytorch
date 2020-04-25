@@ -14,7 +14,9 @@ class Utility:
     def split_train_test(sources, targets, test_fraction=None, test_size=None):
         """Splits the sequence and returns the train and test sequences."""
         if test_size is None:
-           test_size = int(test_fraction * len(sources))
+            test_size = int(test_fraction * len(sources))
+            assert test_size < len(sources)
+        print('Traing size:', len(sources) - test_size, 'test size:', test_size)
 
         return sources[test_size:], \
                targets[test_size:], \
@@ -34,7 +36,8 @@ class Utility:
 
     @staticmethod
     def get_batch_item(batch_values, position):
-        return batch_values[:, position:position + 1, :].contiguous()
+        return (batch_values[0][:, position:position + 1, :].contiguous(),
+                batch_values[1][:, position:position + 1, :].contiguous())
 
     @staticmethod
     def get_single_batch_tensor(sos_index, device):
@@ -88,7 +91,7 @@ class Utility:
                 decoder_out, decoder_hidden = model.decode(decoder_input, decoder_hidden)
                 predicted_index = decoder_out.argmax(dim=2)
                 decoder_input = predicted_index
-                if predicted_index == eos_index:
+                if predicted_index.item() == eos_index:
                     break
                 predicted_indexes.append(predicted_index.item())
             batch_predicted_indexes.append(predicted_indexes)

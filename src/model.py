@@ -11,9 +11,9 @@ class EncoderDecoder(nn.Module):
         self.device = device
         self.teacher_forcing_ration = teacher_forcing_ration
         self.embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=embedding_dim)
-        self.encoder = nn.GRU(input_size=embedding_dim, hidden_size=hidden_size, batch_first=True,
-                              bidirectional=bidirectional)
-        self.decoder = nn.GRU(input_size=embedding_dim, hidden_size=hidden_size, batch_first=True)
+        self.encoder = nn.LSTM(input_size=embedding_dim, hidden_size=hidden_size, batch_first=True,
+                               bidirectional=bidirectional)
+        self.decoder = nn.LSTM(input_size=embedding_dim, hidden_size=hidden_size, batch_first=True)
         self.linear = nn.Linear(in_features=hidden_size, out_features=vocab_size)
 
     def encode(self, batch):
@@ -40,6 +40,3 @@ class EncoderDecoder(nn.Module):
         output, hidden_state = self.decoder(embedded, hidden_state)
         projected_out = self.linear(output)
         return projected_out, hidden_state
-
-    def save_state(self, basedir):
-        torch.save(self, os.path.join(basedir, 'model.pt'))
