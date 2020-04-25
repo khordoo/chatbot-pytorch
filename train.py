@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-GENRE = 'comedy'  # None -> all genres
+GENRE = 'family'  # None -> all genres
 SAVE_DIR = 'saves'
 MAX_TOKEN_LENGTH = 20
 TEST_FRACTION = 0.05
@@ -33,13 +33,8 @@ SAVE_CHECKPOINT_EVERY = 10
 LEARNING_RATE = 0.001
 EPOCHS = 100
 
-
-
 if __name__ == '__main__':
 
-###########################################################
-#LOAD DATA
-############################################################
     os.makedirs(SAVE_DIR, exist_ok=True)
     tokenizer = Tokenizer(contractions_dict=contractions_dict)
     data_loader = dl.DialogLoaderTransformer(data_directory=dl.DATA_DIRECTORY,
@@ -69,9 +64,6 @@ if __name__ == '__main__':
                                      embedding_dim=EMBEDDING_DIM,
                                      bidirectional=False
                                      ).to(DEVICE)
-#############################################
-# TRAINING
-#############################################
 
     optimizer = torch.optim.Adam(encoder_decoder.parameters(), lr=LEARNING_RATE)
     writer = SummaryWriter(comment='-' + datetime.now().isoformat(timespec='seconds'))
