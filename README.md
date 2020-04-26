@@ -8,7 +8,7 @@ Here's an screen shot of the application:
 ![image](https://user-images.githubusercontent.com/32692718/80289273-d9aa8b00-86fa-11ea-80c4-68c806369edd.png)
 
  
-You can interact with the [chatbot live](https://chatbot0.netlify.app/) from here.
+You can interact with the chatbot live from here.
 
 The frontend app was implemented using Vuetify.js and the code is also available on my [github](https://github.com/khordoo/chatbot-frontend)
 ## Requirement
@@ -63,8 +63,36 @@ from the NLTK library is used.
 ### Training
 We split the data into the train and test dataset and keep track of the BLEU score and loss during the training. 
 
+### Tracking the training
+In addition to the logs that are written to the screen, you can also track the progress of the training in the Tensorboard.
+To view the loggs in Tensorboard run the following commands:
+
+````shell script
+tensorboard --logdir runs/
+````
+In case you decided to run the code in a notebook .Run the fallowing command before starting the training:
+```shell script
+%load_ext tensorboard
+%tensorboard --logdir runs/
+````
+
+The following metrics are written to the Tensorboard:
+- Mean training loss
+- Mean Training Bleu score
+- Mean testing Bleu score
+
 Here is the progress of the bleu score over time for the first few epochs.
 ![image](https://user-images.githubusercontent.com/32692718/80285109-deae1100-86df-11ea-8d85-d428a6d71cd3.png)
+
+##Loading the saved model for inference
+The checkpoints are being saved to disk during the training. The saving frequency 
+is being controlled by the configuration variable *SAVE_CHECKPOINT_EVERY*
+
+BY default the files are being saved in **saves** directory. this location can be changed using *SAVE_DIR* variable.
+
+The saved file can be specified in the predict.py model for inference.
+
+
 
 ### References
 1. [Recurrent Models of Visual Attention](https://arxiv.org/abs/1406.6247) by Volodymyr Mnih and others, 2014 
