@@ -58,12 +58,34 @@ in the dictionary, if the occurrence is fewer than 3 , they are removed from the
 if a sentence contains any removed word it will not be included in the training data.
 
 
+### Exploring the dataset
+ 
+**View available genres**
+
+Run the following command to see a list of assailable genres:
+```shell script
+python3 src/data_loader.py --show-genre
+``` 
+
+**View sample dialogs**
+
+To view some sample dialogs for a specific genre run the following command:
+```shell script
+python3 src/data_loader.py --show-dial --genre family
+
+```
+The displayed dialogs are raw and unprocessed dialog from the database.
 
 ## Training
 To train the model :
 ```shell script
 python3 train.py
 ```
+To get a better generalization its better to train on the whole dataset. However,if you want to train faster you can filter the movies based on a specific genre and choose a genre with smaller movies. 
+You can do that by setting the GENRE variable in the train.py file. Setting it to None mean train on the full dataset.
+You can try the comedy or drama genres that have a fewer dialogs.
+
+
 We split the data into the train and test dataset and keep track of the BLEU score and loss during the training. 
 
 ### BLEU Score

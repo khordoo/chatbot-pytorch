@@ -4,9 +4,11 @@ https://www.cs.cornell.edu/~cristian/Cornell_Movie-Dialogs_Corpus.html
 """
 import random
 import logging
+import argparse
 from collections import defaultdict
 from ast import literal_eval
 import numpy as np
+from pprint import pprint
 
 logging.basicConfig(format='%(asctime)-15s %(message)s', level=logging.INFO)
 
@@ -45,9 +47,9 @@ class DialogLoaderTransformer:
         start = np.random.randint(0, len(conversations) - limit - 1)
         return conversations[start:start + limit]
 
-    def display_genres(self):
-        self.logger.info('Total number of movies', len(self.movies))
-        self.logger.info('Total number of genres', len(self.genres))
+    def show_genres(self):
+        self.logger.info(f'Total number of movies: {len(self.movies)}')
+        self.logger.info(f'Total number of genres: {len(self.genres)}')
         for genre, movies in self.genres.items():
             print(f'{genre}:{len(movies)}')
         return self.genres.keys()
@@ -130,3 +132,27 @@ class DialogLoaderTransformer:
             random.shuffle(conversations)
         self.logger.info('Loaded all the conversations , Total conversation pairs: {}'.format(len(conversations)))
         return conversations
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--show-genres', required=False, action='store_true', default=False,
+                        help='Show a list of available genres')
+    parser.add_argument('--show-dial', required=False, action='store_true', default=False,
+                        help='Display sample dialog from a specific genre')
+    parser.add_argument('--genre', required=False, default=None,
+                        help='Genre used for displaying the dialogs')
+    args = parser.parse_args()
+    data_loader = DialogLoaderTransformer(data_directory=DATA_DIRECTORY,
+                                          delimiter=DELIMITER,
+                                          movie_titles_headers=MOVIES_TITLE_HEADERS,
+                                          movie_lines_headers=MOVIE_LINES_HEADERS,
+                                          movie_conversation_headers=MOVE_CONVERSATION_SEQUENCE_HEADERS)
+
+    if args.show_genres:
+        data_loader.show_genres()
+    if args.show_dial:
+        dialogs = data_loader.show_sample_dialog(genre=args.genre)
+        for dialog in dialogs:
+            print(dialog[0] + '\n' + dialog[1])
+            print('---------------------------')
