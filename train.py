@@ -38,24 +38,25 @@ tokenizer = Tokenizer(contractions_dict=contractions_dict)
 
 
 def load_data():
-    """Loads the data and returns the cleaned,and tokenized data."""
+    """Loads, cleans and transforms the raw text data and
+     returns the tokenized source and target phrases"""
     data_loader = dl.DialogLoaderTransformer(data_directory=dl.DATA_DIRECTORY,
                                              delimiter=dl.DELIMITER,
                                              movie_titles_headers=dl.MOVIES_TITLE_HEADERS,
                                              movie_lines_headers=dl.MOVIE_LINES_HEADERS,
                                              movie_conversation_headers=dl.MOVE_CONVERSATION_SEQUENCE_HEADERS)
-    # load and clean the  data
+    # loading and cleaning
     source_texts, target_texts = data_loader.get_training_data(genre=GENRE, shuffle=True)
 
     tokenizer.fit_on_text(source_texts + target_texts, min_keep_frequency=MIN_TOKEN_FREQ)
-    # convert texts to numbers
+    # converting texts to numbers
     source_sequences = tokenizer.convert_text_to_number(source_texts)
     target_sequences = tokenizer.convert_text_to_number(target_texts)
     source_sequences, target_sequences = tokenizer.filter(source_numbers=source_sequences,
                                                           target_numbers=target_sequences,
                                                           max_token_size=MAX_TOKEN_LENGTH,
                                                           remove_unknown=True)
-    # convert numbers to tensors
+    # converting numbers to tensors
     source_sequences = Utility.tensorize(source_sequences, dtype=torch.long, device=DEVICE)
     target_sequences = Utility.tensorize(target_sequences, dtype=torch.long, device=DEVICE)
 
@@ -63,7 +64,7 @@ def load_data():
 
 
 class Trainer:
-    """A wrapper class for training"""
+    """A wrapper class for managing a training session"""
 
     def __init__(self, util, device, save_checkpoint_every):
         self.util = util
@@ -73,9 +74,10 @@ class Trainer:
 
     def train(self, encoder_decoder, tokenizer, train_source, train_target, test_source, test_target, learning_rate,
               batch_size, teacher_forcing_ratio):
-        """Receives ab athc of soruce and target indexes and performances a decoding.For better performance we
-          encode all the sources at once in a batch. We will then use these encoded representations to
-          decode their corresponding targets sequentially.
+        """Receives batched tokenized source and target phrases to train the encoder-decoder model.
+         For a better performance, we encode all sources in one run as a batch. We will then extract
+         the individual encoded representations of each source from the batch to decode their corresponding
+         target sequentially.
         """
 
         optimizer = torch.optim.Adam(encoder_decoder.parameters(), lr=learning_rate)
@@ -112,7 +114,7 @@ class Trainer:
                     bleu_sum += self.util.belu_score(predicted_indexes,
                                                      reference_sequences=target_sequence.cpu().numpy())
 
-                # Calculating the loss for every single index in the batch all at once
+                # Calculating the loss for every single index in the batch, all at once
                 batch_decoder_outs = torch.cat(batch_decoder_outs).to(DEVICE)
                 batch_target_indexes = torch.LongTensor(batch_target_indexes).to(DEVICE)
                 loss = F.cross_entropy(batch_decoder_outs, batch_target_indexes)
@@ -127,11 +129,13 @@ class Trainer:
 
             mean_bleu_test = self.util.evaluate_net(encoder_decoder, test_source, test_target, tokenizer.sos_index,
                                                     self.device)
-            self.report(epoch, mean_loss, mean_bleu_train, mean_bleu_test, encoder_decoder)
+            self.persist(epoch, mean_loss, mean_bleu_train, mean_bleu_test, encoder_decoder)
         self.writer.close()
 
-    def report(self, epoch, mean_loss, mean_bleu_train, mean_bleu_test, encoder_decoder):
-        """Reports the metrics and also writes them to the tensorboard."""
+    def persist(self, epoch, mean_loss, mean_bleu_train, mean_bleu_test, encoder_decoder):
+        """Persists the data to the disk. This includes witting metrics logs
+         to the tensorboard and network sates to the disk.
+        """
         logger.info(
             f'Epoch:{epoch}, Mean loss:{mean_loss:.4f}, Mean BLEU:{mean_bleu_train:.4f}, Mean Test BLEU:{mean_bleu_test:.4f}')
         self.writer.add_scalar('Mean_loss', mean_loss, epoch)
@@ -145,9 +149,8 @@ class Trainer:
 
 
 if __name__ == "__main__":
-    # Load the tokenized data
     source_sequences, target_sequences = load_data()
-    # Create train and test sets
+
     train_source, train_target, test_source, test_target = Utility.split_train_test(source_sequences, target_sequences,
                                                                                     test_fraction=TEST_FRACTION)
     encoder_decoder = EncoderDecoder(vocab_size=tokenizer.dictionary_size,
