@@ -43,7 +43,7 @@ class DialogLoaderTransformer:
 
     def show_sample_dialog(self, genre, limit=10):
         """Shows some sample dialogs for the specified genre"""
-        conversations = self._get_conversation_pairs(genre=genre)
+        conversations = self._get_conversation_pairs(genre=genre, shuffle=False)
         start = np.random.randint(0, len(conversations) - limit - 1)
         return conversations[start:start + limit]
 
@@ -153,6 +153,7 @@ if __name__ == '__main__':
         data_loader.show_genres()
     if args.show_dial:
         dialogs = data_loader.show_sample_dialog(genre=args.genre)
-        for dialog in dialogs:
-            print(dialog[0] + '\n' + dialog[1])
-            print('---------------------------')
+        for i, dialog in enumerate(dialogs):
+            if i % 2 == 0:
+                print(dialog[0])
+                print(dialog[1])
