@@ -5,7 +5,7 @@ I also created a frontend web application to have a convenient user interface fo
 
 Here's an screen shot of the application:
 
-![image](https://user-images.githubusercontent.com/32692718/80289273-d9aa8b00-86fa-11ea-80c4-68c806369edd.png)
+![image](https://user-images.githubusercontent.com/32692718/80321906-54000b80-87de-11ea-8f19-82968e909f1f.png)
 
  
 You can interact with the chatbot live from here.
