@@ -57,16 +57,18 @@ During the data loading, the we count of occurrences for every word
 in the dictionary, if the occurrence is fewer than 3 , they are removed from the dictionary. Subsequently 
 if a sentence contains any removed word it will not be included in the training data.
 
-### BLEU Score
-To keep track of the training progress, in addition to loss, the BLEU score is calculated during the training. For this the bleu_score function
-from the NLTK library is used.
 
-### Training
-To run the train :
+
+## Training
+To train the model :
 ```shell script
 python3 train.py
 ```
 We split the data into the train and test dataset and keep track of the BLEU score and loss during the training. 
+
+### BLEU Score
+To keep track of the training progress, in addition to loss, the BLEU score is calculated during the training. For this the bleu_score function
+from the NLTK library is used.
 
 ### Tracking the training
 In addition to the logs that are written to the screen, you can also track the progress of the training in the Tensorboard.
@@ -98,7 +100,14 @@ BY default the files are being saved in **saves** directory. this location can b
 
 The saved file can be specified in the predict.py model for inference.
 
-
+## Prediction
+To predict a single response from a trained model :
+```shell script
+python3 predict.py
+```
+If you have used a custom saved directory during training make sure to update the values in the predict file.
+We skip the prediction If there is any unrecognized words for the bot in the input.
+ 
 
 ### References
 1. [Recurrent Models of Visual Attention](https://arxiv.org/abs/1406.6247) by Volodymyr Mnih and others, 2014 
