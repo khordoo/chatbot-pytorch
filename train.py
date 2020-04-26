@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-GENRE = 'family'  # None -> all genres
+GENRE = 'comedy'  # None -> all genres
 SAVE_DIR = 'saves'
 MAX_TOKEN_LENGTH = 20
 TEST_FRACTION = 0.05

@@ -20,7 +20,8 @@ I implemented the frontend app using the Vuetify.js and its code is also availab
 ## Get started
 #### Clone the repository
 ```
-git clone https://github.com/khordoo/chatbot-pytorch
+$ git clone https://github.com/khordoo/chatbot-pytorch
+$ cd chatbot-pytorch
 ```
 #### Corpus
 I used the Cornell Movie-Dialogs Corpus dataset which contains structured dialogues extracted from various movie sources, and is known
@@ -64,17 +65,18 @@ if a sentence contains any removed word it will not be included in the training 
 
 Run the following command to see a list of assailable genres:
 ```shell script
-python3 src/data_loader.py --show-genre
+$ python3 src/data_loader.py --show-genre
 ``` 
 
 **View sample dialogs**
 
 To view some sample dialogs for a specific genre run the following command:
 ```shell script
-python3 src/data_loader.py --show-dial --genre family
+$ python3 src/data_loader.py --show-dial --genre comedy
 
 ```
 The displayed dialogs are raw and unprocessed dialog from the database.
+
 
 ## Training
 To train the model :
@@ -88,7 +90,7 @@ You can try the comedy or drama genres that have a fewer dialogs.
 
 We split the data into the train and test dataset and keep track of the BLEU score and loss during the training. 
 
-### BLEU Score
+### BLEU score
 To keep track of the training progress, in addition to loss, the BLEU score is calculated during the training. For this the bleu_score function
 from the NLTK library is used.
 
@@ -97,7 +99,7 @@ In addition to the logs that are written to the screen, you can also track the p
 To view the loggs in Tensorboard run the following commands:
 
 ````shell script
-tensorboard --logdir runs/
+$ tensorboard --logdir runs/
 ````
 In case you decided to run the code in a notebook .Run the fallowing command before starting the training:
 ```shell script
@@ -125,7 +127,7 @@ The saved file can be specified in the predict.py model for inference.
 ## Prediction
 To predict a single response from a trained model :
 ```shell script
-python3 predict.py
+$ python3 predict.py
 ```
 If you have used a custom saved directory during training make sure to update the values in the predict file.
 We skip the prediction If there is any unrecognized words for the bot in the input.
