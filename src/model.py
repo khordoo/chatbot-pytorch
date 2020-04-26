@@ -45,7 +45,7 @@ class AttentionEncoderDecoder(nn.Module):
         # Collapses all the encoder outputs into a single output
         # to be combined with the decoder output
         attended_encoder_outs = torch.bmm(attention_weights, encoder_outs)
-        # now that they both have the same shape, combine encode and decoder outs together
+        # now that they both have the same shape, combine encoder and decoder outs together
         combined = torch.cat([attended_encoder_outs, decoder_out], dim=2)
         # shrink the combined size back to the hidden size
         combined_outs = self.attention_combine(combined)
