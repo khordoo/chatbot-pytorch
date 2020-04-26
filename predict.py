@@ -24,28 +24,36 @@ encoder_decoder.load_state_dict(torch.load(os.path.join(SAVE_DIRECTORY,
                                            map_location=DEVICE))
 
 
-def predict_response(text):
-    """Predicts the response to the input text
-       text: list
-           input text to be used as input to the seq2seq model.
-       Example:
-       text=['who are you?']
-    """
-    assert isinstance(text, list)
-    tokens = tokenizer.convert_text_to_number(text)
-    try:
-        # Skip prediction if input contains any unrecognized words
-        found_index = tokens[0][:-1].tolist().index(tokenizer.unknown_index)
-        return ["Sorry, there is a word that I don't understand:\n"]
-    except ValueError:
-        # No unknown word was found,
-        # continue with prediction
-        pass
-    response, indexes = Utility.predict(source_texts=text, model=encoder_decoder, tokenizer=tokenizer, device=DEVICE,
-                                        max_prediction_len=MAX_PRED_LENGTH)
-    return response
+class PredictResponseGreedy:
+    @classmethod
+    def predict(cls, text):
+        """Receives an array of raw texts and returns the predicted response
+           using the Greedy Search method.
+           Example:
+               text=['Who are you?]
+        """
+        assert isinstance(text, list)
+
+        tokens = tokenizer.convert_text_to_number(text)
+        if cls._has_unrecognized_words(tokens):
+            return ["Sorry, there is a word that I don't understand:\n"]
+        else:
+            response, indexes = Utility.predict(source_texts=text, model=encoder_decoder, tokenizer=tokenizer,
+                                                device=DEVICE,
+                                                max_prediction_len=MAX_PRED_LENGTH)
+            return response[0]
+
+    @classmethod
+    def _has_unrecognized_words(cls, tokens):
+        try:
+            _ = tokens[0][:-1].tolist().index(tokenizer.unknown_index)
+            return True
+        except ValueError:
+            # there is no unknown_index in the tokens,
+            return False
 
 
 query = ['who are you?']
-response = predict_response(query)[0]
+
+response = PredictResponseGreedy.predict(query)
 print('response:\n', response)
