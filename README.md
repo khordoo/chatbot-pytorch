@@ -10,7 +10,8 @@ Here's an screen shot of the application:
  
 You can interact with the chatbot live from here.
 
-The frontend app was implemented using Vuetify.js and the code is also available on my [github](https://github.com/khordoo/chatbot-frontend)
+I implemented the frontend app using the Vuetify.js and its code is also available on my [github repo](https://github.com/khordoo/chatbot-frontend)
+
 ## Requirement
 * python 3.5+
 * pytorch 0.4.0

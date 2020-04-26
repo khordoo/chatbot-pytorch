@@ -1,13 +1,12 @@
 import os
 import logging
-import joblib
 import torch
 import torch.nn.functional as F
 import numpy as np
 from datetime import datetime
 from src import data_loader as dl
 from tensorboardX import SummaryWriter
-from src.model import EncoderDecoder
+from src.model import AttentionEncoderDecoder
 from src.utility import Utility
 from src.tokenizer import Tokenizer
 from data.contractions import contractions_dict
@@ -92,14 +91,17 @@ class Trainer:
                 batch_decoder_outs = []
                 batch_target_indexes = []
                 bleu_sum = 0
-                # Sequentially decode every index in every target sequence
+                # Sequentially decodes every index in every target sequence
                 for position, target_sequence in enumerate(batch_target):
-                    encoder_hidden = self.util.get_batch_item(batch_encoder_hidden, position=position)
+                    encoder_hidden = self.util.get_hidden_state_batch_item(batch_encoder_hidden, position=position)
+                    encoder_outs = self.util.get_outputs_batch_item(batch_encoder_outs, position=position)
                     decoder_hidden = encoder_hidden
                     decoder_input = self.util.get_single_batch_tensor(tokenizer.sos_index, self.device)
                     predicted_indexes = []
                     for target_index in target_sequence:
-                        decoder_out, decoder_hidden = encoder_decoder.decode(decoder_input, decoder_hidden)
+                        decoder_out, decoder_hidden = encoder_decoder.decode(decoder_input=decoder_input,
+                                                                             decoder_hidden=decoder_hidden,
+                                                                             encoder_outs=encoder_outs)
                         predicted_index = decoder_out.argmax(dim=2)
                         # teacher forcing
                         if np.random.random() < teacher_forcing_ratio:
@@ -114,7 +116,7 @@ class Trainer:
                     bleu_sum += self.util.belu_score(predicted_indexes,
                                                      reference_sequences=target_sequence.cpu().numpy())
 
-                # Calculating the loss for every single index in the batch, all at once
+                # Calculating the loss for all the indexes in the batch, at once
                 batch_decoder_outs = torch.cat(batch_decoder_outs).to(DEVICE)
                 batch_target_indexes = torch.LongTensor(batch_target_indexes).to(DEVICE)
                 loss = F.cross_entropy(batch_decoder_outs, batch_target_indexes)
@@ -153,11 +155,11 @@ if __name__ == "__main__":
 
     train_source, train_target, test_source, test_target = Utility.split_train_test(source_sequences, target_sequences,
                                                                                     test_fraction=TEST_FRACTION)
-    encoder_decoder = EncoderDecoder(vocab_size=tokenizer.dictionary_size,
-                                     hidden_size=HIDDEN_SIZE,
-                                     embedding_dim=EMBEDDING_DIM,
-                                     bidirectional=False
-                                     ).to(DEVICE)
+    encoder_decoder = AttentionEncoderDecoder(vocab_size=tokenizer.dictionary_size,
+                                              hidden_size=HIDDEN_SIZE,
+                                              embedding_dim=EMBEDDING_DIM,
+                                              bidirectional=False
+                                              ).to(DEVICE)
     trainer = Trainer(device=DEVICE, save_checkpoint_every=SAVE_CHECKPOINT_EVERY, util=Utility)
     trainer.train(encoder_decoder, tokenizer, train_source, train_target, test_source, test_target,
                   learning_rate=LEARNING_RATE, batch_size=BATCH_SIZE, teacher_forcing_ratio=TEACHER_FORCING_PROB)

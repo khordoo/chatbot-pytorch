@@ -35,9 +35,13 @@ class Utility:
                    targets[position:position + batch_size])
 
     @staticmethod
-    def get_batch_item(batch_values, position):
+    def get_hidden_state_batch_item(batch_values, position):
         return (batch_values[0][:, position:position + 1, :].contiguous(),
                 batch_values[1][:, position:position + 1, :].contiguous())
+
+    @staticmethod
+    def get_outputs_batch_item(batch_values, position):
+        return batch_values[position:position + 1, :, :].contiguous()
 
     @staticmethod
     def get_single_batch_tensor(sos_index, device):
@@ -54,15 +58,17 @@ class Utility:
     @staticmethod
     def evaluate_net(model, batch_source, batch_target, sos_index, device):
         """Evaluates the performance of the model using the test set"""
-        encoder_out, batch_encoder_hidden = model.encode(batch_source)
+        batch_encoder_out, batch_encoder_hidden = model.encode(batch_source)
         bleu_sum = 0
         for position, target_sequence in enumerate(batch_target):
-            encoder_hidden = Utility.get_batch_item(batch_encoder_hidden, position=position)
+            encoder_hidden = Utility.get_hidden_state_batch_item(batch_encoder_hidden, position=position)
+            encoder_outs = Utility.get_outputs_batch_item(batch_encoder_out, position=position)
             decoder_hidden = encoder_hidden
             decoder_input = torch.LongTensor([[sos_index]]).to(device)
             predicted_indexes = []
             for _ in range(len(target_sequence)):
-                decoder_out, decoder_hidden = model.decode(decoder_input, decoder_hidden)
+                decoder_out, decoder_hidden = model.decode(decoder_input=decoder_input, decoder_hidden=decoder_hidden,
+                                                           encoder_outs=encoder_outs)
                 predicted_index = decoder_out.argmax(dim=2)
                 decoder_input = predicted_index
                 predicted_indexes.append(predicted_index.item())
@@ -83,7 +89,7 @@ class Utility:
         batch_predicted_texts = []
         batch_predicted_indexes = []
         for position in range(len(source_indexes)):
-            encoder_hidden = Utility.get_batch_item(batch_encoder_hidden, position=position)
+            encoder_hidden = Utility.get_hidden_batch_item(batch_encoder_hidden, position=position)
             decoder_hidden = encoder_hidden
             decoder_input = torch.LongTensor([[sos_index]]).to(device)
             predicted_indexes = []
