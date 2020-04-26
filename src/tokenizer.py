@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import torch
 
-logging.basicConfig(format='%(asctime)-15s %(message)s' ,level=logging.INFO)
+logging.basicConfig(format='%(asctime)-15s %(message)s', level=logging.INFO)
 
 
 class Tokenizer:
@@ -43,7 +43,7 @@ class Tokenizer:
             self._trim_dictionary(min_keep_frequency)
 
     def convert_text_to_number(self, text_sentences):
-        """Converts text into its numerical representation"""
+        """Converts a batch of texts into their numerical representation"""
         self.logger.info('Converting words to indexes.')
         eos_index = self.word2index[self.END_TOKEN]
         source_indexes = []
@@ -69,7 +69,8 @@ class Tokenizer:
                     continue
             filtered_sources.append(source)
             filtered_targets.append(target)
-        self.logger.info(f'Filtering completed, Sequences reduced from {len(source_numbers)} to {len(filtered_sources)}')
+        self.logger.info(
+            f'Filtering completed, Sequences reduced from {len(source_numbers)} to {len(filtered_sources)}')
         return filtered_sources, filtered_targets
 
     def convert_number_to_text(self, indexes):
@@ -113,13 +114,13 @@ class Tokenizer:
 
     def _trim_dictionary(self, min_keep_frequency=0):
         """Reduce dictionary vocab size based on minimum required word frequency."""
-        top_words = [word for word, count in self.word_counter.items()
-                     if count >= min_keep_frequency]
+        keep_words = [word for word, count in self.word_counter.items()
+                      if count >= min_keep_frequency]
         self.logger.info(
-            f'Found {len(self.word2index) - len(top_words)} with frequency less that {min_keep_frequency}')
-        if top_words:
+            f'Found {len(self.word2index) - len(keep_words)} words with frequency less that {min_keep_frequency}')
+        if keep_words:
             self._init_dictionary()
-            for word in top_words:
+            for word in keep_words:
                 self._add_word(word)
 
         self.logger.info(f'Trimming completed. Updated dictionary word count:{len(self.word2index)} ')
@@ -140,6 +141,13 @@ class Tokenizer:
     def unknown_index(self):
         return self.word2index[self.UNKNOWN_TOKEN]
 
-    def save_state(self, basedir):
-        torch.save(self, os.path.join(basedir, 'tokenizer.pt'))
-        self.logger.info('Successfully saved the tokenizer on disk.')
+    def save_state_dict(self, basedir, filename='tokenizer_dict.pt'):
+        torch.save(self.word2index, os.path.join(basedir, filename))
+        self.logger.info('Successfully saved the tokenizer dict on disk.')
+
+    def load_state_dict(self, full_path, device):
+        saved_dict = torch.load(full_path, map_location=device)
+        self.word2index.update(saved_dict)
+        for word, index in self.word2index.items():
+            self.index2word[index] = word
+        self.logger.info(f'Successfully loaded the tokenizer from disk. Dictionary size: {len(self.word2index)}')

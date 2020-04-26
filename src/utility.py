@@ -84,17 +84,19 @@ class Utility:
         source_indexes = [torch.LongTensor(source_index).to(device) for source_index in source_indexes]
         sos_index = tokenizer.sos_index
         eos_index = tokenizer.eos_index
-        encoder_out, batch_encoder_hidden = model.encode(source_indexes)
+        batch_encoder_out, batch_encoder_hidden = model.encode(source_indexes)
         # Doing prediction
         batch_predicted_texts = []
         batch_predicted_indexes = []
         for position in range(len(source_indexes)):
-            encoder_hidden = Utility.get_hidden_batch_item(batch_encoder_hidden, position=position)
+            encoder_hidden = Utility.get_hidden_state_batch_item(batch_encoder_hidden, position=position)
+            encoder_outs = Utility.get_outputs_batch_item(batch_encoder_out, position=position)
             decoder_hidden = encoder_hidden
             decoder_input = torch.LongTensor([[sos_index]]).to(device)
             predicted_indexes = []
             for _ in range(max_prediction_len):
-                decoder_out, decoder_hidden = model.decode(decoder_input, decoder_hidden)
+                decoder_out, decoder_hidden = model.decode(decoder_input=decoder_input, decoder_hidden=decoder_hidden,
+                                                           encoder_outs=encoder_outs)
                 predicted_index = decoder_out.argmax(dim=2)
                 decoder_input = predicted_index
                 if predicted_index.item() == eos_index:
