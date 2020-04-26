@@ -84,7 +84,8 @@ The following metrics are written to the Tensorboard:
 Here is the progress of the bleu score over time for the first few epochs.
 ![image](https://user-images.githubusercontent.com/32692718/80285109-deae1100-86df-11ea-8d85-d428a6d71cd3.png)
 
-##Loading the saved model for inference
+### Loading the saved model for inference
+
 The checkpoints are being saved to disk during the training. The saving frequency 
 is being controlled by the configuration variable *SAVE_CHECKPOINT_EVERY*
 
