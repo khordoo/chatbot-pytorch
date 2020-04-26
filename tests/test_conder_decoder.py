@@ -1,6 +1,6 @@
 import unittest
 import torch
-from src.model import EncoderDecoder
+from src.model import AttentionEncoderDecoder
 
 
 class TestEncoderDecoder(unittest.TestCase):
@@ -18,8 +18,8 @@ class TestEncoderDecoder(unittest.TestCase):
         HIDDEN_SIZE = 512
         EMBEDDIN_DIM = 50
         VOCAB_SIZE = 29
-        self.encoder_decoder = EncoderDecoder(input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE,
-                                              embedding_dim=EMBEDDIN_DIM, vocab_size=VOCAB_SIZE, bidirectional=False)
+        self.encoder_decoder = AttentionEncoderDecoder(input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE,
+                                                       embedding_dim=EMBEDDIN_DIM, vocab_size=VOCAB_SIZE, bidirectional=False)
 
     def test_pad_sequence(self):
         """tests the sequences are padded"""
@@ -34,5 +34,5 @@ class TestEncoderDecoder(unittest.TestCase):
         HIDDEN_SIZE = 20
         EMBEDDIN_DIM = 50
         VOCAB_SIZE = INPUT_SIZE
-        self.encoder_decoder = EncoderDecoder(input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE,
-                                              embedding_dim=EMBEDDIN_DIM, vocab_size=VOCAB_SIZE, bidirectional=False)
+        self.encoder_decoder = AttentionEncoderDecoder(input_size=INPUT_SIZE, hidden_size=HIDDEN_SIZE,
+                                                       embedding_dim=EMBEDDIN_DIM, vocab_size=VOCAB_SIZE, bidirectional=False)
