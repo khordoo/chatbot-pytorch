@@ -62,6 +62,10 @@ To keep track of the training progress, in addition to loss, the BLEU score is c
 from the NLTK library is used.
 
 ### Training
+To run the train :
+```shell script
+python3 train.py
+```
 We split the data into the train and test dataset and keep track of the BLEU score and loss during the training. 
 
 ### Tracking the training
@@ -82,7 +86,7 @@ The following metrics are written to the Tensorboard:
 - Mean Training Bleu score
 - Mean testing Bleu score
 
-Here is the progress of the bleu score over time for the first few epochs.
+Here is the dynamics of the mean training bleu score  over the initial 80 epochs.
 ![image](https://user-images.githubusercontent.com/32692718/80285109-deae1100-86df-11ea-8d85-d428a6d71cd3.png)
 
 ### Loading the saved model for inference
@@ -99,3 +103,4 @@ The saved file can be specified in the predict.py model for inference.
 ### References
 1. [Recurrent Models of Visual Attention](https://arxiv.org/abs/1406.6247) by Volodymyr Mnih and others, 2014 
 2. [Self-critical Sequence Training for Image Captioning](https://arxiv.org/abs/1612.00563) S. Rennie, Marcherett, and others in 2016
+3. [Effective Approaches to Attention-based Neural Machine Translation](https://arxiv.org/abs/1508.04025) Minh-Thang Luong and others 2015

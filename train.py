@@ -144,7 +144,7 @@ class Trainer:
         self.writer.add_scalar('Mean_Bleu', mean_bleu_train, epoch)
         self.writer.add_scalar('Mean_Test_Bleu', mean_bleu_test, epoch)
 
-        if epoch % self.save_checkpoint_every == 0:
+        if epoch % self.save_checkpoint_every == 0 or (epoch == EPOCHS - 1):
             save_name = f"epoch_{epoch}_{datetime.now().isoformat(timespec='seconds')}.pt"
             torch.save(encoder_decoder.state_dict(), os.path.join(SAVE_DIR, save_name))
             logger.info(f'Checkpoint saved --> {save_name}')
@@ -155,11 +155,14 @@ if __name__ == "__main__":
 
     train_source, train_target, test_source, test_target = Utility.split_train_test(source_sequences, target_sequences,
                                                                                     test_fraction=TEST_FRACTION)
+    # Saving the words dictionary for later inference
+    tokenizer.save_state_dict(SAVE_DIR)
     encoder_decoder = AttentionEncoderDecoder(vocab_size=tokenizer.dictionary_size,
                                               hidden_size=HIDDEN_SIZE,
                                               embedding_dim=EMBEDDING_DIM,
                                               bidirectional=False
                                               ).to(DEVICE)
+
     trainer = Trainer(device=DEVICE, save_checkpoint_every=SAVE_CHECKPOINT_EVERY, util=Utility)
     trainer.train(encoder_decoder, tokenizer, train_source, train_target, test_source, test_target,
                   learning_rate=LEARNING_RATE, batch_size=BATCH_SIZE, teacher_forcing_ratio=TEACHER_FORCING_PROB)
